@@ -83,7 +83,7 @@ function correr(ajustes, simularPanel) {
 }
 
 const grupos = ['A', 'B', 'C', 'ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18',
-                'SERIE', 'FECHAS', 'MANCHAS', 'SIGNO', 'P51', 'CURV', 'NO_EXISTE'];
+                'SERIE', 'FECHAS', 'MANCHAS', 'SIGNO', 'P51', 'CURV', 'MTF', 'NO_EXISTE'];
 let fallos = 0;
 for (const g of grupos) {
   for (const fu of ['63', 'CTRL', '30', '70R']) {

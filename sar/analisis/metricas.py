@@ -11,7 +11,7 @@ Solo usa la libreria estandar de Python.
   python3 metricas.py tamano                       # sesgo por tamano en los 25 controles
   python3 metricas.py signo ARCHIVO                # salida del GRUPO 'SIGNO'
   python3 metricas.py p51 --eventos A --controles B [--ciega C]   # salida del GRUPO 'P51'
-  python3 metricas.py variante --eventos A --controles B [--p0-base-eventos P51_63]
+  python3 metricas.py variante --eventos A --controles B [--p0-base-eventos P51_63] [--tipo mtf]
                                                    # GRUPO 'CURV' (u otra variante con p0) contra la v15
 
 Detecta = puesto entre 1 y TOP_N (4). AUC por evento con el puntaje -min(rk v11, rk
@@ -378,7 +378,16 @@ def cmd_variante(a):
     auc_b = auc([puntaje(base_e[i]) for i in ie], [puntaje(base_c[i]) for i in ic])
     auc_v = auc([puntaje(var_e[i]) for i in ie], [puntaje(var_c[i]) for i in ic])
     print('| AUC por evento | %s | %s |' % (num(auc_b), num(auc_v)))
-    # comprobacion de unidades y diagnostico
+    if a.tipo == 'mtf':   # columnas 9 y 10 = imagenes en la ventana pre y post
+        todos = list(var_e.values()) + list(var_c.values())
+        npre, npos = [r['fcaja'] for r in todos], [r['fpol'] for r in todos]
+        print('\nImagenes por ventana (asc + desc, VH): pre media %s (%d a %d); post media %s (%d a %d)'
+              % (num(statistics.mean(npre), 1), min(npre), max(npre), num(statistics.mean(npos), 1), min(npos), max(npos)))
+        regla = tv > tb and esp_v >= 0.838
+        print('\nRegla de parada (sube la deteccion y la especificidad no baja de 83,8 %%): %s'
+              % ('LA PASA; revisar tambien que la suma de p0 no suba' if regla else 'NO la pasa'))
+        return
+    # comprobacion de unidades y diagnostico (GRUPO CURV)
     fc = [r['fcaja'] for r in list(var_e.values()) + list(var_c.values()) if r['fcaja'] >= 0]
     fp = [var_e[i]['fpol'] for i in ie if var_e[i]['fpol'] >= 0]
     print('\nFraccion de la caja que quita la mascara (comprobacion de unidades): mediana %s, rango %s a %s'
@@ -416,6 +425,8 @@ def main():
     v.add_argument('--eventos', required=True)
     v.add_argument('--controles', required=True)
     v.add_argument('--p0-base-eventos')
+    v.add_argument('--tipo', choices=['curv', 'mtf'], default='curv',
+                   help='curv: columnas 9-10 = fraccion quitada; mtf: imagenes pre y post')
     a = ap.parse_args()
     {'resumen': cmd_resumen, 'comparar': cmd_comparar, 'tamano': cmd_tamano,
      'signo': cmd_signo, 'p51': cmd_p51, 'variante': cmd_variante}[a.cmd](a)
