@@ -11,6 +11,8 @@ Solo usa la libreria estandar de Python.
   python3 metricas.py tamano                       # sesgo por tamano en los 25 controles
   python3 metricas.py signo ARCHIVO                # salida del GRUPO 'SIGNO'
   python3 metricas.py p51 --eventos A --controles B [--ciega C]   # salida del GRUPO 'P51'
+  python3 metricas.py variante --eventos A --controles B [--p0-base-eventos P51_63]
+                                                   # GRUPO 'CURV' (u otra variante con p0) contra la v15
 
 Detecta = puesto entre 1 y TOP_N (4). AUC por evento con el puntaje -min(rk v11, rk
 fusion), rk = -1 cuenta como 1 (el peor). Intervalos: Wilson para proporciones y
@@ -323,6 +325,71 @@ def cmd_p51(a):
             num(statistics.median([r['p0_15'] for r in ev])), num(statistics.median([r['p0_15'] for r in ct]))))
 
 
+CLASES = [(0, 0.1, '< 0,1 ha'), (0.1, 0.25, '0,1 a 0,25 ha'), (0.25, 0.5, '0,25 a 0,5 ha'),
+          (0.5, 1.0, '0,5 a 1 ha'), (1.0, 1e9, '>= 1 ha')]
+
+
+def leer_variante(ruta):
+    """Salida de un GRUPO de variante: las 7 columnas de V15C y despues p0 v15, fcaja, fpol."""
+    cols = ['indice', 'ha', 'p11', 'pfus', 'p15', 'rk11', 'rkfus', 'p0', 'fcaja', 'fpol']
+    return [dict(zip(cols, f)) for f in leer_filas(ruta, 10)]
+
+
+def cmd_variante(a):
+    base_e = {int(r['indice']): r for r in leer_v15c(os.path.join(DATOS, 'v15c_63.csv'))}
+    base_c = {int(r['indice']): r for r in leer_v15c(os.path.join(DATOS, 'v15c_ctrl.csv'))}
+    var_e = {int(r['indice']): r for r in leer_variante(a.eventos)}
+    var_c = {int(r['indice']): r for r in leer_variante(a.controles)}
+    ie, ic = sorted(set(base_e) & set(var_e)), sorted(set(base_c) & set(var_c))
+    print('Sitios comparados: %d eventos y %d controles.\n' % (len(ie), len(ic)))
+
+    # detecion total y por tamano
+    print('| area | eventos | v15 guardada | variante |')
+    print('|---|---|---|---|')
+    for lo, hi, nom in CLASES:
+        ids = [i for i in ie if lo <= base_e[i]['ha'] < hi]
+        print('| %s | %d | %d | %d |' % (nom, len(ids), sum(detecta(base_e[i]['p15']) for i in ids),
+                                        sum(detecta(var_e[i]['p15']) for i in ids)))
+    tb, tv = sum(detecta(base_e[i]['p15']) for i in ie), sum(detecta(var_e[i]['p15']) for i in ie)
+    fb, fv = sum(detecta(base_c[i]['p15']) for i in ic), sum(detecta(var_c[i]['p15']) for i in ic)
+    print('| **total** | %d | **%d** | **%d** |' % (len(ie), tb, tv))
+    esp_b, esp_v = (len(ic) - fb) / len(ic), (len(ic) - fv) / len(ic)
+    print('\n| medida | v15 guardada | variante |')
+    print('|---|---|---|')
+    print('| falsas alarmas en los %d controles | %d | %d |' % (len(ic), fb, fv))
+    print('| especificidad | %s | %s |' % (pct(esp_b), pct(esp_v)))
+    gana = [i for i in ie if not detecta(base_e[i]['p15']) and detecta(var_e[i]['p15'])]
+    pierde = [i for i in ie if detecta(base_e[i]['p15']) and not detecta(var_e[i]['p15'])]
+    print('| eventos que gana | - | %s |' % (', '.join('ID %d' % i for i in gana) or 'ninguno'))
+    print('| eventos que pierde | - | %s |' % (', '.join('ID %d' % i for i in pierde) or 'ninguno'))
+    print('| McNemar exacto (eventos) | - | p = %s |' % num(binom_dos_colas(len(gana), len(gana) + len(pierde))))
+    ctrl_nuevas = [i for i in ic if not detecta(base_c[i]['p15']) and detecta(var_c[i]['p15'])]
+    print('| falsas alarmas nuevas | - | %s |' % (', '.join('C%d' % i for i in ctrl_nuevas) or 'ninguna'))
+    suma_v = sum(var_e[i]['p0'] for i in ie)
+    if a.p0_base_eventos:
+        cols = ['indice', 'ha', 'p11', 'p0_11', 'p15', 'p0_15', 'cob8', 'ent8']
+        pb = {int(f[0]): dict(zip(cols, f)) for f in leer_filas(a.p0_base_eventos, 8)}
+        suma_b = num(sum(pb[i]['p0_15'] for i in ie if i in pb), 1)
+    else:
+        suma_b = '~6 (encabezado del v19)'
+    print('| suma de p0 en los eventos (toques esperados por azar) | %s | %s |' % (suma_b, num(suma_v, 1)))
+    print('| suma de p0 en los controles | - | %s |' % num(sum(var_c[i]['p0'] for i in ic), 1))
+    # AUC por evento
+    auc_b = auc([puntaje(base_e[i]) for i in ie], [puntaje(base_c[i]) for i in ic])
+    auc_v = auc([puntaje(var_e[i]) for i in ie], [puntaje(var_c[i]) for i in ic])
+    print('| AUC por evento | %s | %s |' % (num(auc_b), num(auc_v)))
+    # comprobacion de unidades y diagnostico
+    fc = [r['fcaja'] for r in list(var_e.values()) + list(var_c.values()) if r['fcaja'] >= 0]
+    fp = [var_e[i]['fpol'] for i in ie if var_e[i]['fpol'] >= 0]
+    print('\nFraccion de la caja que quita la mascara (comprobacion de unidades): mediana %s, rango %s a %s'
+          % (num(statistics.median(fc), 2), num(min(fc), 2), num(max(fc), 2)))
+    print('Fraccion del poligono que quita (eventos, diagnostico): mediana %s; en %d de %d eventos quita mas de la mitad'
+          % (num(statistics.median(fp), 2), sum(x > 0.5 for x in fp), len(fp)))
+    regla = tv > tb and esp_v >= 0.838
+    print('\nRegla de parada (sube la deteccion y la especificidad no baja de 83,8 %%): %s'
+          % ('LA PASA; revisar tambien que la suma de p0 no suba' if regla else 'NO la pasa'))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -345,9 +412,13 @@ def main():
     p.add_argument('--controles', required=True)
     p.add_argument('--ciega')
     p.add_argument('--alfa', type=float, default=0.05)
+    v = sub.add_parser('variante')
+    v.add_argument('--eventos', required=True)
+    v.add_argument('--controles', required=True)
+    v.add_argument('--p0-base-eventos')
     a = ap.parse_args()
     {'resumen': cmd_resumen, 'comparar': cmd_comparar, 'tamano': cmd_tamano,
-     'signo': cmd_signo, 'p51': cmd_p51}[a.cmd](a)
+     'signo': cmd_signo, 'p51': cmd_p51, 'variante': cmd_variante}[a.cmd](a)
 
 
 if __name__ == '__main__':
