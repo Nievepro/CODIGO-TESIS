@@ -33,3 +33,11 @@ Confirmarlo contra `consola_v15C_30.csv`.
 El paquete tambien decia "v15 con puesto 1-8 = 49" en los 63 y 15 en los controles:
 esos numeros son en realidad los sitios con alguna mancha que toca (puesto distinto
 de -1). Con puesto 1 a 8 son 38 y 5.
+
+# Censo de manchas (GRUPO 'MANCHAS')
+
+`manchas_ctrl_C15_C26.csv`: 96 manchas (8 por control) de los controles C15 a C26,
+corrida del 2026-09-27 con `VISTA 'SCRIPT'`, ya con la correccion que distingue 0 de
+dato faltante. -99 = sin dato (en f_* suele ser que no hubo imagen de Dynamic World).
+Las columnas lia_asc y lia_desc dependen del signo de alfa_r: no usarlas hasta el
+GRUPO 'SIGNO'. Faltan C2 a C14 y los 63.

@@ -779,6 +779,8 @@ function modelo(pol, fPre, fPos, opc) {
           Ib: ee.Image(cb.I).rename('I').clip(AOI), agua: nasadem.select('swb').eq(0),   // v16: cambio sin mascara de pendiente
           // v19: angulo de incidencia local (grados) por sentido de paso, para el censo de manchas
           lia: function (paso) { return ee.Image.constant(thetaDe(paso)).subtract(alfaR(vista[paso]).multiply(180 / Math.PI)); },
+          // panel: pixeles en layover o sombra por sentido de paso (1 = mala geometria)
+          mala: function (paso) { return malaGeom(vista[paso], thetaDe(paso)); },
           diag: {contraste: contraste, fracMala: fracMala, dN: dN, dN10: dN10,
                  nDespPre: nDesp(vp.ini, vp.fin), nDespPos: nDesp(fPos, fPos.advance(vpost, 'day')),
                  dias: fPos.difference(fPre, 'day'), ha: pol.area(1).divide(1e4)},
@@ -1423,6 +1425,35 @@ function pintar(r, regla, pol) {
   Map.addLayer(r.C, ColorScale, 'contraste local (v2)', false, 0.75);
   Map.addLayer(R.top.style({color: '00ffff', fillColor: '00ffff33', width: 2}), {}, 'top 4 entregadas');
   if (R.dib) Map.addLayer(R.dib, {palette: ['ff00ff']}, 'deslizamiento dibujado (v16)', true, 0.55);
+  // ---- capas de revision del censo de manchas (2026-09-27). Todas apagadas: se prenden
+  // en el menu Layers y se leen con la pestana Inspector (clic en el mapa).
+  if (r.diagV) {
+    var rv = r;
+    var tA = rv.reglas.v1.top, tB = rv.diagV.rb.reglas.v1.top;
+    // sin style(): asi el Inspector muestra area (a), cambio medio (mean) y toca de cada mancha
+    Map.addLayer(tA, {color: 'ffa500'}, 'REV manchas carril 1 (v11)', false);
+    Map.addLayer(tB, {color: '00ff00'}, 'REV manchas carril 2 (fusion)', false);
+    // angulo de incidencia local (depende del signo de alfa_r: ver GRUPO 'SIGNO')
+    var liaVis = {min: 0, max: 90, palette: ['d7191c', 'fdae61', 'ffffbf', 'abd9e9', '2c7bb6']};
+    Map.addLayer(rv.lia('ASCENDING').clip(rv.AOI), liaVis, 'REV angulo local asc (grados, VISTA ' + VISTA + ')', false);
+    Map.addLayer(rv.lia('DESCENDING').clip(rv.AOI), liaVis, 'REV angulo local desc (grados, VISTA ' + VISTA + ')', false);
+    Map.addLayer(rv.mala('ASCENDING').selfMask().clip(rv.AOI), {palette: ['000000']}, 'REV layover o sombra asc', false, 0.6);
+    Map.addLayer(rv.mala('DESCENDING').selfMask().clip(rv.AOI), {palette: ['444444']}, 'REV layover o sombra desc', false, 0.6);
+    // cambio de NDVI pre - post (optico, solo diagnostico): rojo = perdio vegetacion
+    Map.addLayer(rv.diag.dN.clip(rv.AOI), {min: -0.3, max: 0.3, palette: ['1a9641', 'ffffff', 'd7191c']},
+                 'REV dNDVI pre - post (optico)', false, 0.8);
+    // VH mediana de la ventana pre (dB)
+    var vhc = s1base.filterBounds(rv.AOI).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+                .filterDate(rv.vp.ini, rv.vp.fin).select('VH');
+    Map.addLayer(vhc.median().clip(rv.AOI), {min: -25, max: -5}, 'REV VH pre (dB)', false);
+    // Dynamic World en la ventana post: clase mas frecuente (paleta oficial)
+    var dwc = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1').filterBounds(rv.AOI)
+                .filterDate(rv.fPos, rv.fPos.advance(VPOST, 'day')).select('label');
+    Map.addLayer(dwc.mode().clip(rv.AOI), {min: 0, max: 8, palette: ['419bdf', '397d49', '88b053', '7a87c6',
+                 'e49635', 'dfc35a', 'c4281b', 'a59b8f', 'b39fe1']},
+                 'REV Dynamic World post (0 agua, 1 arboles, 2 pasto, 4 cultivo, 5 arbustos, 7 suelo)', false);
+    Map.addLayer(rv.slope.clip(rv.AOI), {min: 0, max: 60, palette: ['ffffff', '000000']}, 'REV pendiente (grados)', false);
+  }
 }
 
 if (MODO === 'PANEL') {
