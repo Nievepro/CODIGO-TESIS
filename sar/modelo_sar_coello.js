@@ -185,15 +185,37 @@
 //    CAPAS S2 (2026-09-26): si la ventana no tiene imagenes con < 10 % de
 //        nubes (el filtro original), la capa quedaba vacia y no se podia
 //        prender. Ahora usa Cloud Score+ en ese caso.
+//    REVISION DEL CODIGO (2026-09-27), sin cambiar la deteccion: con FUENTE '30' o
+//        '70R' varios grupos leian los controles del archivo de 70 (ahora todos usan
+//        indices() y leer(FUENTE)); DESDE y HASTA valen para todas las fuentes y cada
+//        lote imprime los sitios que corre; los atajos de polz (VHVVc20, RAT20, ...)
+//        ya no botan opciones como vpre, lado o lee; MANCHAS no se cae si falta VH o
+//        Dynamic World; en el panel la pendiente es la del modelo (20) y hay capa del
+//        cambio del carril 2. SALIDA = 'DRIVE' manda el lote a un CSV en Drive.
+//    POR VERIFICAR (2026-09-27, GRUPO 'SIGNO'): la direccion de vista puede estar
+//        girada 180 grados frente a Vollrath et al. (2020). Ellos usan el aspecto de
+//        la banda 'angle' (apunta hacia el sensor, ~258 asc y ~102 desc); aqui se usa
+//        rumbo + 90 (apunta en contra del sensor). Si es asi, alfa_r sale con el signo
+//        al reves y quedan en espejo la correccion por pendiente, la mascara de layover
+//        y sombra, el margen de la v18 y el angulo local del censo. VISTA = 'VOLLRATH'
+//        corre la otra convencion; no se cambia nada hasta ver la prueba.
 // ============================================================================
 
 // ------------------------------------------------------------------ AJUSTES
 var MODO   = 'LOTE';    // 'PANEL' o 'LOTE'
-var FUENTE = 'CTRL';    // para MODO 'LOTE': '63', 'CTRL', '70R' o '30' (prueba ciega)
+var FUENTE = 'CTRL';    // para MODO 'LOTE': '63', 'CTRL', '70R' o '30' (prueba ciega); sirve en todos los grupos
+// DESDE y HASTA son POSICIONES en la lista de la fuente, no ID: se corren DESDE a HASTA - 1.
+// En los 63, DESDE = 13 empieza en el ID 14; en los controles, en C15. Todo: DESDE = 0, HASTA = 99.
 var DESDE = 13, HASTA = 25;
-var GRUPO = 'MANCHAS';     // v11: 'A' (pendiente y caja), 'B' (Lee y persistencia), 'C'; 'ROC' = curva ROC y kappa de v1 y v11
+// 'A' (pendiente y caja), 'B' (Lee y persistencia), 'C' (v11); 'ROC'; 'V12', 'V13', 'V14', 'V15',
+// 'V15C', 'V16', 'V18'; 'SERIE', 'FECHAS', 'MANCHAS' (diagnosticos); 'SIGNO' (prueba de alfa_r)
+var GRUPO = 'MANCHAS';
 var V15 = ['TT20', 'TA20', 'FDR20', 'FDT20', 'FDRU20', 'FSUM20'];   // variantes de la v15 que corre el LOTE
 // FUENTE '70R' = los 45 deslizamientos confirmados del archivo de 70 (posiciones 0, 1 y 27 a 69)
+var SALIDA = 'CONSOLA';   // lote: 'CONSOLA' (print, como siempre) o 'DRIVE' (tarea que deja un CSV en Drive)
+// direccion de vista del radar: 'SCRIPT' = la de siempre (78,03 asc / 281,97 desc);
+// 'VOLLRATH' = girada 180 grados, como el codigo de Vollrath et al. (2020). Ver GRUPO 'SIGNO'.
+var VISTA = 'SCRIPT';
 
 var LADO = 1000, VPRE = 180, VPOST = 180, PCT = 99, PEND_MIN = 10;
 var R_IN = 30, R_OUT = 150;   // circulo y anillo del contraste local, en metros
@@ -235,19 +257,28 @@ function ventanaPre(fPre, fPos, modo, vpre, vpost) {
   return {ini: ini, fin: ini.advance(vpost, 'day')};
 }
 
+// copia de las opciones con algunos campos cambiados. Los atajos de polz la usan para
+// no botar las demas opciones (antes 'VHVVc20' perdia vpre, vpost, lado, lee, ...)
+function conOpc(o, cambios) {
+  var r = {}, k;
+  for (k in o) r[k] = o[k];
+  for (k in cambios) r[k] = cambios[k];
+  return r;
+}
+
 // opc = {ventana: 'NORMAL' o 'TEMPORADA', polz: 'VH' o 'VV'}
 function modelo(pol, fPre, fPos, opc) {
   // v11: la mejor version = v8 con mascara de pendiente minima de 20 grados
-  if (opc.polz === 'VHVVc20') opc = {ventana: opc.ventana, polz: 'VHVVc', pendMin: 20, margen: opc.margen, orb: opc.orb, pista: opc.pista};
+  if (opc.polz === 'VHVVc20') opc = conOpc(opc, {polz: 'VHVVc', pendMin: 20});
   // v12 (P53): indices de vegetacion con radar, con la mascara de pendiente de la v11
-  if (opc.polz === 'RAT20') opc = {ventana: opc.ventana, polz: 'RAT', pendMin: 20};
-  if (opc.polz === 'RVI20') opc = {ventana: opc.ventana, polz: 'RVI', pendMin: 20};
-  if (opc.polz === 'MIX20') opc = {ventana: opc.ventana, polz: 'MIX', pendMin: 20};
+  if (opc.polz === 'RAT20') opc = conOpc(opc, {polz: 'RAT', pendMin: 20});
+  if (opc.polz === 'RVI20') opc = conOpc(opc, {polz: 'RVI', pendMin: 20});
+  if (opc.polz === 'MIX20') opc = conOpc(opc, {polz: 'MIX', pendMin: 20});
   // v13 (P54): prueba estadistica de cambio con todas las imagenes, pendiente 20
-  if (opc.polz === 'OMN20') opc = {ventana: opc.ventana, polz: 'OMN', pendMin: 20};
+  if (opc.polz === 'OMN20') opc = conOpc(opc, {polz: 'OMN', pendMin: 20});
   // v15: prueba t por pixel y fusion de evidencias de radar, pendiente 20
   if (['TT20', 'TA20', 'FDR20', 'FDT20', 'FDRU20', 'FSUM20'].indexOf(opc.polz) >= 0)
-    opc = {ventana: opc.ventana, polz: opc.polz.replace('20', ''), pendMin: 20, margen: opc.margen, orb: opc.orb, pista: opc.pista};
+    opc = conOpc(opc, {polz: opc.polz.replace('20', ''), pendMin: 20});
   // v10: largo de las ventanas en dias (por defecto VPRE y VPOST = 180)
   var vpre = opc.vpre || VPRE, vpost = opc.vpost || VPOST;
   var vp = ventanaPre(fPre, fPos, opc.ventana, vpre, vpost);
@@ -265,8 +296,12 @@ function modelo(pol, fPre, fPos, opc) {
 
   // Geometria de vista de Sentinel-1 sobre el Coello: rumbo medido en la
   // cuenca (asc -11,97 grados, desc -168,03) + 90 = direccion de vista.
+  // VISTA = 'VOLLRATH': la misma direccion girada 180 grados (el aspecto de la banda
+  // 'angle', que es lo que usan Vollrath et al. 2020). Girarla 180 grados es lo mismo
+  // que cambiarle el signo a alfa_r. Cual es la correcta lo dice el GRUPO 'SIGNO'.
   var D2R = Math.PI / 180, NOVENTA = Math.PI / 2;
-  var vista = {ASCENDING: 78.03, DESCENDING: 281.97};
+  var vista = VISTA === 'VOLLRATH' ? {ASCENDING: 258.03, DESCENDING: 101.97}
+                                   : {ASCENDING: 78.03, DESCENDING: 281.97};
   // pendiente en la direccion de vista (alfa_r), en radianes
   var alfaR = function (phiI) {
     var phiR = ee.Image.constant(phiI).subtract(aspect).multiply(D2R);
@@ -736,6 +771,8 @@ function modelo(pol, fPre, fPos, opc) {
                  nDespPre: nDesp(vp.ini, vp.fin), nDespPos: nDesp(fPos, fPos.advance(vpost, 'day')),
                  dias: fPos.difference(fPre, 'day'), ha: pol.area(1).divide(1e4)},
           puesto: puesto, vp: vp, manchas: manchas, cobertura: cobertura,
+          // para el GRUPO 'SIGNO' y para pintar la pendiente que de verdad usa el modelo
+          alfaR: alfaR, vista: vista, pendMin: opc.pendMin || PEND_MIN,
           // objeto JS (no ee.Dictionary) para que Earth Engine calcule solo lo que se pide
           datos: {
             nap: cb.nap, naq: cb.naq, ndp: cb.ndp, ndq: cb.ndq,
@@ -808,7 +845,8 @@ function carrilDoble(a, b) {
           top: A.top.merge(B.top), pu: pu};
 }
 
-// lee un evento del inventario (fuente '63') o un control del archivo de 70
+// lee un evento del inventario (fuente '63'), un sitio de la prueba ciega ('30') o uno
+// del archivo de 70 (cualquier otra: 'CTRL' o '70R')
 function leer(fuente, idx) {
   if (fuente === '63') {
     var F = ee.Feature(inv.filter(ee.Filter.eq('ID', idx)).first());
@@ -820,13 +858,52 @@ function leer(fuente, idx) {
           fPos: ee.Date(ee.Number(G.get('Post_event')))};
 }
 
+// sitios de un lote: las posiciones DESDE a HASTA - 1 de la lista de la fuente.
+// '63' = ID del inventario; 'CTRL' = C2 a C26; '70R' = 0, 1 y 27 a 69 del archivo de 70;
+// '30' = 0 a 29 (0 a 11 controles, 12 a 29 deslizamientos)
+function indices(fu) {
+  var l = fu === '63' ? ee.List(inv.sort('ID').aggregate_array('ID'))
+        : fu === '30' ? ee.List.sequence(0, 29)
+        : fu === '70R' ? ee.List([0, 1]).cat(ee.List.sequence(27, 69))
+        : ee.List.sequence(2, 26);
+  return l.slice(DESDE, HASTA);
+}
+
+// salida de un lote: en la consola, como siempre, o con SALIDA = 'DRIVE' como tarea que
+// guarda un CSV en la carpeta SAR_COELLO de Google Drive (una fila por linea, columna
+// 'fila'; la primera fila es el titulo). La tarea no tiene el limite de tiempo de la
+// consola: se lanza desde la pestana Tasks.
+function sacar(titulo, filas, sep) {
+  filas = ee.List(filas);
+  if (SALIDA !== 'DRIVE') {
+    print(titulo);
+    print(filas.join(sep));
+    return;
+  }
+  var nombre = ('SAR_' + GRUPO + '_' + FUENTE + '_' + DESDE + '_' + HASTA + '_' + VISTA)
+                 .replace(/[^A-Za-z0-9_-]/g, '_');
+  var fc = ee.FeatureCollection(ee.List([titulo]).cat(filas).map(function (t) {
+    return ee.Feature(null, {fila: t});
+  }));
+  Export.table.toDrive({collection: fc, description: nombre, folder: 'SAR_COELLO',
+                        fileNamePrefix: nombre, fileFormat: 'CSV', selectors: ['fila']});
+  print(titulo, 'Salida: tarea ' + nombre + ' (pestana Tasks -> Run; queda en Drive, carpeta SAR_COELLO).');
+}
+
+if (MODO === 'LOTE' && ['SERIE', 'FECHAS'].indexOf(GRUPO) < 0) {
+  print('Lote ' + GRUPO + ', fuente ' + FUENTE + ', posiciones ' + DESDE + ' a ' + (HASTA - 1)
+      + ', vista ' + VISTA + '. Sitios:', indices(FUENTE));
+}
+
 // ============================================================================
 //  MODO LOTE: una linea por escena, todas las versiones a la vez
 // ============================================================================
-if (MODO === 'LOTE' && ['ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18', 'SERIE', 'FECHAS', 'MANCHAS'].indexOf(GRUPO) < 0) {
-  var lista = FUENTE === '63'
-    ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
-    : ee.List.sequence(2, 26);
+var GRUPOS = ['A', 'B', 'C', 'ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18',
+              'SERIE', 'FECHAS', 'MANCHAS', 'SIGNO'];
+// antes un nombre mal escrito corria el grupo 'B' sin avisar
+if (MODO === 'LOTE' && GRUPOS.indexOf(GRUPO) < 0) print('GRUPO desconocido: ' + GRUPO + '. Use uno de: ' + GRUPOS.join(', '));
+if (MODO === 'LOTE' && ['A', 'B', 'C'].indexOf(GRUPO) >= 0) {
+  var lista = indices(FUENTE);
   var lineas = lista.map(function (i) {
     var e = leer(FUENTE, i);
     var pol = e.F.geometry();
@@ -839,7 +916,7 @@ if (MODO === 'LOTE' && ['ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18',
     var c = modelo(pol, e.fPre, e.fPos, base);                 // v8
     var pu = function (r) { return f(r.puesto(r.reglas.v1.m, 'a'), '%d'); };
     var rkf = function (r) { return f(r.datos.rk, '%.3f'); };
-    var txt = ee.String(FUENTE === '63' ? 'ID' : 'C').cat(f(i, '%d')).cat(' v8=').cat(pu(c));
+    var txt = ee.String(FUENTE === '63' ? 'ID' : FUENTE === '30' ? 'S' : 'C').cat(f(i, '%d')).cat(' v8=').cat(pu(c));
     if (GRUPO === 'A') {
       // v11: pendiente minima 15 y 20 grados; caja de 500 m y de 2 km
       var q15 = op({pendMin: 15}), q20 = op({pendMin: 20});
@@ -860,10 +937,9 @@ if (MODO === 'LOTE' && ['ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18',
     }
     return txt;
   });
-  print('v11 sobre la v8, grupo ' + GRUPO + '. Puesto de la mejor mancha que toca (-1 = ninguna); detecta si esta entre 1 y ' + TOP_N + '. '
+  sacar('v11 sobre la v8, grupo ' + GRUPO + '. Puesto de la mejor mancha que toca (-1 = ninguna); detecta si esta entre 1 y ' + TOP_N + '. '
       + 'pendN = mascara de pendiente minima N grados; cajaN = caja de N m; lee = filtro de Lee por imagen; '
-      + 'persist = el cambio debe seguir en la segunda mitad de la ventana post. rk = como siempre.');
-  print(ee.List(lineas).join(' | '));
+      + 'persist = el cambio debe seguir en la segunda mitad de la ventana post. rk = como siempre.', lineas, ' | ');
 }
 
 // ============================================================================
@@ -873,9 +949,7 @@ if (MODO === 'LOTE' && ['ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18',
 //  poligono contra el resto de la caja, en cada evento.
 // ============================================================================
 if (MODO === 'LOTE' && GRUPO === 'ROC') {
-  var listaR = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
-             : FUENTE === '70R' ? ee.List([0, 1]).cat(ee.List.sequence(27, 69))
-             : ee.List.sequence(2, 26);
+  var listaR = indices(FUENTE);
   var NB = 300;
   var histo = function (img, geom) {
     var h = img.reduceRegion({reducer: ee.Reducer.fixedHistogram(-15, 15, NB), geometry: geom,
@@ -894,7 +968,7 @@ if (MODO === 'LOTE' && GRUPO === 'ROC') {
              ee.Number(num).divide(ee.Number(nin).multiply(nout)), -1));
   };
   var filas = listaR.map(function (i) {
-    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var e = leer(FUENTE, i);
     var pol = e.F.geometry();
     var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VH'});        // v1
     var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});   // v11
@@ -910,9 +984,8 @@ if (MODO === 'LOTE' && GRUPO === 'ROC') {
     }
     return t;
   });
-  print('ROC ' + FUENTE + ': indice, puesto v1, puesto v11, rk v1, rk v11, ha'
-      + (FUENTE !== 'CTRL' ? ', AUC por pixel v1, AUC por pixel v11' : '') + '. Separador: punto y coma.');
-  print(ee.List(filas).join(';'));
+  sacar('ROC ' + FUENTE + ': indice, puesto v1, puesto v11, rk v1, rk v11, ha'
+      + (FUENTE !== 'CTRL' ? ', AUC por pixel v1, AUC por pixel v11' : '') + '. Separador: punto y coma.', filas, ';');
 }
 
 // ============================================================================
@@ -921,10 +994,9 @@ if (MODO === 'LOTE' && GRUPO === 'ROC') {
 //  poligono cubierta por las 4 manchas entregadas (criterio de solape).
 // ============================================================================
 if (MODO === 'LOTE' && (GRUPO === 'V12' || GRUPO === 'V13' || GRUPO === 'V15')) {
-  var listaV = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
-             : ee.List.sequence(2, 26);
+  var listaV = indices(FUENTE);
   var filasV = listaV.map(function (i) {
-    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var e = leer(FUENTE, i);
     var pol = e.F.geometry();
     var t = ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'));
     (GRUPO === 'V13' ? ['VHVVc20', 'OMN20'] : GRUPO === 'V15' ? ['VHVVc20'].concat(V15)
@@ -936,9 +1008,8 @@ if (MODO === 'LOTE' && (GRUPO === 'V12' || GRUPO === 'V13' || GRUPO === 'V15')) 
     });
     return t;
   });
-  print(GRUPO + ' ' + FUENTE + ': indice, ha; y para ' + (GRUPO === 'V13' ? 'v11 y OMN' : GRUPO === 'V15' ? 'v11 y ' + V15.join(', ')
-      : 'v11, RAT, RVI, MIX') + ': puesto, rk, cobertura. Separador: punto y coma.');
-  print(ee.List(filasV).join(';'));
+  sacar(GRUPO + ' ' + FUENTE + ': indice, ha; y para ' + (GRUPO === 'V13' ? 'v11 y OMN' : GRUPO === 'V15' ? 'v11 y ' + V15.join(', ')
+      : 'v11, RAT, RVI, MIX') + ': puesto, rk, cobertura. Separador: punto y coma.', filasV, ';');
 }
 
 // ============================================================================
@@ -984,16 +1055,21 @@ if (MODO === 'LOTE' && GRUPO === 'SERIE') {
 // ============================================================================
 var DW = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1');
 if (MODO === 'LOTE' && GRUPO === 'MANCHAS') {
-  var listaM = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
-             : ee.List.sequence(2, 26).slice(DESDE, HASTA);
+  var listaM = indices(FUENTE);
   var filasM = listaM.map(function (i) {
-    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var e = leer(FUENTE, i);
     var pol = e.F.geometry();
     var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
     var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
-    var dwl = DW.filterBounds(a.AOI).filterDate(e.fPos, e.fPos.advance(180, 'day')).select('label').mode();
-    var vhp = s1base.filterBounds(a.AOI).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
-                .filterDate(a.vp.ini, a.vp.fin).select('VH').median();
+    // sin imagenes, mode() y median() dan una imagen sin bandas y rename() tumbaba todo el
+    // lote; ahora queda una banda vacia y la columna sale en -99
+    var dwc = DW.filterBounds(a.AOI).filterDate(e.fPos, e.fPos.advance(180, 'day')).select('label');
+    var dwl = ee.Image(ee.Algorithms.If(dwc.size().gt(0), dwc.mode(),
+                ee.Image.constant(-1).rename('label').updateMask(0)));
+    var vhc = s1base.filterBounds(a.AOI).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+                .filterDate(a.vp.ini, a.vp.fin).select('VH');
+    var vhp = ee.Image(ee.Algorithms.If(vhc.size().gt(0), vhc.median(),
+                ee.Image.constant(0).rename('VH').updateMask(0)));
     var pila = a.slope.rename('pend')
       .addBands(a.lia('ASCENDING').rename('liaA')).addBands(a.lia('DESCENDING').rename('liaD'))
       .addBands(a.diag.dN.rename('dN')).addBands(vhp.rename('vh'))
@@ -1014,11 +1090,12 @@ if (MODO === 'LOTE' && GRUPO === 'MANCHAS') {
         .cat(',').cat(f(a.datos.llPre, '%.0f')).cat(',').cat(f(a.datos.llPos, '%.0f'))
         .cat(',').cat(f(a.datos.nap, '%d')).cat(',').cat(f(a.datos.ndp, '%d'));
     });
-    return ee.List(txt).join(';');
+    return txt;
   });
-  print('MANCHAS ' + FUENTE + ': sitio, carril, toca, ha, cambio, pendiente, lia asc, lia desc, dNDVI, VH pre, '
-      + 'f arboles, f pasto, f cultivo, f arbustos, f suelo, lluvia pre, lluvia post, n asc pre, n desc pre. Separador: punto y coma.');
-  print(ee.List(filasM).join(';'));
+  // ojo: lia asc y lia desc dependen del signo de alfa_r (VISTA); ver GRUPO 'SIGNO'
+  sacar('MANCHAS ' + FUENTE + ' (vista ' + VISTA + '): sitio, carril, toca, ha, cambio, pendiente, lia asc, lia desc, dNDVI, VH pre, '
+      + 'f arboles, f pasto, f cultivo, f arbustos, f suelo, lluvia pre, lluvia post, n asc pre, n desc pre. Separador: punto y coma.',
+      ee.List(filasM).flatten(), ';');
 }
 
 // ============================================================================
@@ -1049,8 +1126,8 @@ if (MODO === 'LOTE' && GRUPO === 'FECHAS') {
       .cat(',').cat(f(con(e.fPos, e.fPos.advance(180, 'day')), '%.3f'))
       .cat(',').cat(e.fPre.format('YYYY-MM-dd')).cat(',').cat(e.fPos.format('YYYY-MM-dd'));
   });
-  print('FECHAS 63: ID, contraste NDVI un ano antes, en la ventana pre, en la post, fecha pre, fecha post. Separador: punto y coma.');
-  print(ee.List(filasF).join(';'));
+  sacar('FECHAS 63: ID, contraste NDVI un ano antes, en la ventana pre, en la post, fecha pre, fecha post. Separador: punto y coma.',
+        filasF, ';');
 }
 
 // ============================================================================
@@ -1060,10 +1137,9 @@ if (MODO === 'LOTE' && GRUPO === 'FECHAS') {
 var V18 = [{}, {pista: true}];
 // ronda 1: [{}, {margen: 10}, {margen: 20}, {orb: true}, {margen: 10, orb: true}]
 if (MODO === 'LOTE' && GRUPO === 'V18') {
-  var listaG = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
-             : ee.List.sequence(2, 26);
+  var listaG = indices(FUENTE);
   var filasG = listaG.map(function (i) {
-    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var e = leer(FUENTE, i);
     var pol = e.F.geometry();
     var t = ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'));
     V18.forEach(function (x) {
@@ -1076,8 +1152,8 @@ if (MODO === 'LOTE' && GRUPO === 'V18') {
     });
     return t;
   });
-  print('V18 ' + FUENTE + ': indice, ha; y para ' + JSON.stringify(V18) + ': puesto v15, IoU. Separador: punto y coma.');
-  print(ee.List(filasG).join(';'));
+  sacar('V18 ' + FUENTE + ': indice, ha; y para ' + JSON.stringify(V18) + ': puesto v15, IoU. Separador: punto y coma.',
+        filasG, ';');
 }
 
 // ============================================================================
@@ -1090,10 +1166,9 @@ var V16 = [null, DIB16];   // v15 sin crecer y la variante elegida
 //           {pct: 90, pend: 10, pasos: 30}, {pct: 95, pend: 10, pasos: 30}]
 // ronda 1: [null, {pct: 95, pend: 20}, {pct: 90, pend: 20}, {pct: 95, pend: 10}, {pct: 90, pend: 10}]
 if (MODO === 'LOTE' && GRUPO === 'V16') {
-  var listaD = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
-             : FUENTE === '70R' ? ee.List([0, 1]).cat(ee.List.sequence(27, 69)) : ee.List.sequence(2, 26);
+  var listaD = indices(FUENTE);
   var filasD = listaD.map(function (i) {
-    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var e = leer(FUENTE, i);
     var pol = e.F.geometry();
     var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
     var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
@@ -1105,9 +1180,8 @@ if (MODO === 'LOTE' && GRUPO === 'V16') {
     });
     return t;
   });
-  print('V16 ' + FUENTE + ': indice, ha, puesto v15; y para ' + JSON.stringify(V16) + ': '
-      + 'cobertura, precision, IoU. Separador: punto y coma.');
-  print(ee.List(filasD).join(';'));
+  sacar('V16 ' + FUENTE + ': indice, ha, puesto v15; y para ' + JSON.stringify(V16) + ': '
+      + 'cobertura, precision, IoU. Separador: punto y coma.', filasD, ';');
 }
 
 // ============================================================================
@@ -1116,11 +1190,9 @@ if (MODO === 'LOTE' && GRUPO === 'V16') {
 //  de la v15 (el mejor de los dos), rk de cada carril y area.
 // ============================================================================
 if (MODO === 'LOTE' && GRUPO === 'V15C') {
-  var listaC = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
-             : FUENTE === '30' ? ee.List.sequence(0, 29)
-             : FUENTE === '70R' ? ee.List([0, 1]).cat(ee.List.sequence(27, 69)) : ee.List.sequence(2, 26);
+  var listaC = indices(FUENTE);
   var filasC = listaC.map(function (i) {
-    var e = leer(FUENTE === '63' ? '63' : (FUENTE === '30' ? '30' : '70'), i);
+    var e = leer(FUENTE, i);
     var pol = e.F.geometry();
     var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
     var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
@@ -1129,8 +1201,8 @@ if (MODO === 'LOTE' && GRUPO === 'V15C') {
       .cat(',').cat(f(a.puesto(a.reglas.v1.m, 'a'), '%d')).cat(',').cat(f(b.puesto(b.reglas.v1.m, 'a'), '%d'))
       .cat(',').cat(f(d.pu, '%d')).cat(',').cat(f(a.datos.rk, '%.4f')).cat(',').cat(f(b.datos.rk, '%.4f'));
   });
-  print('V15C ' + FUENTE + ': indice, ha, puesto v11, puesto fusion, puesto v15, rk v11, rk fusion. Separador: punto y coma.');
-  print(ee.List(filasC).join(';'));
+  sacar('V15C ' + FUENTE + ' (vista ' + VISTA + '): indice, ha, puesto v11, puesto fusion, puesto v15, rk v11, rk fusion. '
+      + 'Separador: punto y coma.', filasC, ';');
 }
 
 // ============================================================================
@@ -1139,10 +1211,9 @@ if (MODO === 'LOTE' && GRUPO === 'V15C') {
 //  puesto del mejor objeto que toca, numero de objetos en la caja y cobertura.
 // ============================================================================
 if (MODO === 'LOTE' && GRUPO === 'V14') {
-  var listaW = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
-             : ee.List.sequence(2, 26);
+  var listaW = indices(FUENTE);
   var filasW = listaW.map(function (i) {
-    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var e = leer(FUENTE, i);
     var pol = e.F.geometry();
     var r = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
     var t = ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'));
@@ -1153,9 +1224,55 @@ if (MODO === 'LOTE' && GRUPO === 'V14') {
     });
     return t;
   });
-  print('V14 ' + FUENTE + ': indice, ha; y para v11, v14 (50 m), v14p (30 m), v14e (50 m, filtro), '
-      + 'v14q (30 m, filtro): puesto, n objetos, cobertura. Separador: punto y coma.');
-  print(ee.List(filasW).join(';'));
+  sacar('V14 ' + FUENTE + ': indice, ha; y para v11, v14 (50 m), v14p (30 m), v14e (50 m, filtro), '
+      + 'v14q (30 m, filtro): puesto, n objetos, cobertura. Separador: punto y coma.', filasW, ';');
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'SIGNO' (2026-09-27): prueba del signo de alfa_r, la pendiente en
+//  la direccion de vista. No cambia nada del modelo. En sigma0 SIN corregir, las
+//  laderas que miran al sensor salen mas brillantes que las que le dan la espalda
+//  (varios dB en terreno como el del Coello). Con la convencion del modelo, las que
+//  miran al sensor son las de alfa_r > 0. Por sitio y sentido de paso:
+//    rumbo = aspecto medio de la banda 'angle' (lo que Vollrath et al. 2020 usan como
+//            direccion de vista; no depende de VISTA). Si da ~78 asc y ~282 desc, el
+//            script usa la convencion de ellos; si da ~258 y ~102, esta girado 180,
+//    VV+ y VV- = sigma0 VV medio (dB, mediana de la ventana post) donde alfa_r > +15 y
+//            < -15 grados, con n+ y n- pixeles.
+//  Lectura: si en casi todos los sitios VV+ > VV-, el signo esta bien. Si VV+ < VV-,
+//  alfa_r esta al reves con la VISTA usada. Correr con VISTA = 'SCRIPT'.
+// ============================================================================
+if (MODO === 'LOTE' && GRUPO === 'SIGNO') {
+  var filasS = indices(FUENTE).map(function (i) {
+    var e = leer(FUENTE, i), pol = e.F.geometry();
+    var r = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
+    var fm = function (x, fmt) { return ee.Number(ee.Algorithms.If(x, x, -99)).format(fmt); };
+    var t = ee.String(f(i, '%d'));
+    ['ASCENDING', 'DESCENDING'].forEach(function (paso) {
+      var c = s1base.filterBounds(r.AOI).filter(ee.Filter.eq('orbitProperties_pass', paso))
+        .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+        .filterDate(e.fPos, e.fPos.advance(VPOST, 'day'));
+      var hay = c.size().gt(0);
+      var aR = r.alfaR(r.vista[paso]).multiply(180 / Math.PI);
+      var vv = c.select('VV').median();
+      var clase = function (m) {
+        return ee.Dictionary(ee.Algorithms.If(hay,
+          vv.updateMask(m).reduceRegion({reducer: ee.Reducer.mean().combine(ee.Reducer.count(), '', true),
+            geometry: r.AOI, scale: 10, bestEffort: true}), ee.Dictionary({})));
+      };
+      var mas = clase(aR.gt(15)), menos = clase(aR.lt(-15));
+      var rumbo = ee.Algorithms.If(hay,
+        ee.Terrain.aspect(ee.Image(c.first()).select('angle')).reduceRegion({reducer: ee.Reducer.mean(),
+          geometry: r.AOI.buffer(3000), scale: 100, bestEffort: true}).get('aspect'), null);
+      t = t.cat(',').cat(fm(rumbo, '%.1f'))
+           .cat(',').cat(fm(mas.get('VV_mean', -99), '%.2f')).cat(',').cat(fm(menos.get('VV_mean', -99), '%.2f'))
+           .cat(',').cat(fm(mas.get('VV_count', -99), '%d')).cat(',').cat(fm(menos.get('VV_count', -99), '%d'));
+    });
+    return t;
+  });
+  sacar('SIGNO ' + FUENTE + ' (vista ' + VISTA + '): indice; y para asc y desc: rumbo (aspecto de la banda angle), '
+      + 'VV+ (dB, alfa_r > 15), VV- (dB, alfa_r < -15), n+, n-. Si VV+ < VV- en casi todos, alfa_r esta al reves. '
+      + 'Separador: punto y coma.', filasS, ';');
 }
 
 // ============================================================================
@@ -1203,7 +1320,11 @@ function pintar(r, regla, pol) {
   Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p80'))), percentileColor, 'I_ratio >= 80th percentile', false, 0.75);
   Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p90'))), percentileColor, 'I_ratio >= 90th percentile', false, 0.75);
   Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p99'))), percentileColor, 'I_ratio >= 99th percentile', false, 0.75);
-  Map.addLayer(r.slope.updateMask(r.slope.gte(PEND_MIN)), {min: 0, max: 60, palette: ['ffffff', '000000']}, 'slope (masked)', false);
+  // v15: el cambio del carril 2 (fusion en escala z: 0 = mediana de la caja, 1 = su p99)
+  if (r.diagV) Map.addLayer(r.diagV.rb.I, {min: -2, max: 2, palette: ColorScale.palette}, 'cambio carril 2 (fusion, z)', false, 0.75);
+  // la pendiente minima que de verdad usa el modelo (20 en la v11 y la v15; antes siempre 10)
+  Map.addLayer(r.slope.updateMask(r.slope.gte(r.pendMin)), {min: 0, max: 60, palette: ['ffffff', '000000']},
+               'slope (masked, >= ' + r.pendMin + ')', false);
   Map.addLayer(ee.FeatureCollection([ee.Feature(pol)]).style({color: 'ffff00', fillColor: '00000000', width: 2}), {}, 'Coello inventory');
   Map.addLayer(ee.FeatureCollection([ee.Feature(r.AOI)]).style({color: 'ffffff', fillColor: '00000000', width: 1}), {}, 'AOI');
   // capas nuevas de la v2
@@ -1272,7 +1393,7 @@ if (MODO === 'PANEL') {
     nota('v5 VV: 23 de 63, 2 falsas alarmas. Sola no mejora'),
     nota('VH y VV juntas (8 manchas): 26 de 63, 3 falsas alarmas'),
     nota('v6 promedio VH y VV (4 manchas): 26 de 63, 2 falsas alarmas. '
-       + 'Mejor variante; falta confirmarla en los 30'),
+       + 'Superada por la v8'),
     nota('v7 banda L ALOS-2: 10 de 63, 4 falsas alarmas. Resolucion muy gruesa'),
     nota('v8 promedio VH y VV corregido por pendiente: 29 de 63, 1 falsa alarma. '
        + 'Superada por la v11'),
@@ -1282,15 +1403,15 @@ if (MODO === 'PANEL') {
     nota('v10 radar + filtro optico (NDVI, Cloud Score+): 32 de 63, 1 falsa alarma. '
        + 'Descartada: la tesis evalua solo el radar'),
     nota('v11 v8 con pendiente minima de 20 grados: 30 de 63, 0 falsas alarmas. '
-       + 'MEJOR VERSION; falta confirmarla en los 30'),
+       + 'Superada por la v15. Prueba ciega: 6 de 18, 4 falsas alarmas de 12'),
     nota('v11 descartadas: caja de 500 m y de 2 km, filtro de Lee, persistencia'),
     nota('v12 indices de vegetacion radar (VH/VV, RVI, mezcla): 11 a 22 de 63. Descartados'),
     nota('v13 prueba omnibus: 29 de 63, 3 falsas alarmas. Rota eventos, no mejora'),
     nota('v14 objetos (Esposito et al. 2020): 22 a 29 de 63, 2 a 5 falsas alarmas. Descartada'),
     nota('v15 prueba t y fusiones con 4 manchas: 27 a 30 de 63, 0 a 2 falsas alarmas. Ninguna supera a la v11'),
     nota('v15 DOS CARRILES (v11 + fusion, 8 manchas): 35 de 63, 0 falsas alarmas. '
-       + 'la v11 sola con 8 manchas da 33 y 4. En los 12 controles de la prueba ciega '
-       + 'no agrega falsas alarmas (4 de 12, las mismas de la v11)'),
+       + 'la v11 sola con 8 manchas da 33 y 4. Prueba ciega: 7 de 18 (v11: 6) y en los 12 '
+       + 'controles no agrega falsas alarmas (4 de 12, las mismas de la v11)'),
     nota('v16 dibujo: la mancha crece sobre el cambio suavizado (p95, pendiente 10). No cambia la '
        + 'deteccion. Coincidencia (IoU) mediana 0,16 -> 0,29; poligono cubierto 17 % -> 44 %'),
     nota('La prueba ciega (30) ya se corrio con la v1, la v11 y la v15; aqui solo se revisa en el mapa.')]);
@@ -1445,11 +1566,14 @@ if (MODO === 'PANEL') {
       salida.add(fila('Dias entre fecha pre y post', String(x.dias)));
       salida.add(fila('Lluvia ventana pre / post', n2(x.llPre).split('.')[0] + ' / ' + n2(x.llPos).split('.')[0] + ' mm'));
       salida.add(etiqueta('La decision'));
-      salida.add(fila(regla.indexOf('v14') === 0 ? 'Umbral de la regla' : 'Umbral (p99 de la caja)', n3(x.u) + ' dB'));
+      salida.add(fila(regla.indexOf('v14') === 0 ? 'Umbral de la regla'
+        : regla === 'v15' ? 'Umbral carril 1 (p99)' : 'Umbral (p99 de la caja)', n3(x.u) + ' dB'));
       salida.add(fila('Area marcada en la caja', n2(x.marc) + ' ha'));
       salida.add(fila('Area marcada dentro', n2(x.acie) + ' ha'));
-      salida.add(fila('Manchas en la caja', String(x.nC)));
-      salida.add(fila('Manchas que tocan', String(x.nT)));
+      // en la v15 se suman las de los dos carriles: una zona marcada por los dos cuenta dos veces
+      var dosC = regla === 'v15' ? ' (2 carriles)' : '';
+      salida.add(fila('Manchas en la caja' + dosC, String(x.nC)));
+      salida.add(fila('Manchas que tocan' + dosC, String(x.nT)));
       salida.add(fila('Puesto de la mejor que toca', txtPuesto(pu)));
       salida.add(fila('Poligono cubierto por las ' + (regla === 'v15' ? 8 : 4), Math.round(x.cob * 100) + ' %'));
       if (x.diou >= 0 && esEvento) {   // en un control no hay deslizamiento que dibujar
