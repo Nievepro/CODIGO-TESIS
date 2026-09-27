@@ -1090,7 +1090,10 @@ if (MODO === 'LOTE' && GRUPO === 'MANCHAS') {
     var tops = a.reglas.v1.top.map(function (g) { return g.set('carril', 1); })
       .merge(b.reglas.v1.top.map(function (g) { return g.set('carril', 2); }));
     var st = pila.reduceRegions({collection: tops, reducer: ee.Reducer.mean(), scale: 10});
-    var fm = function (g, k, fmt) { return ee.Number(ee.Algorithms.If(g.get(k), g.get(k), -99)).format(fmt); };
+    // -99 solo si el dato falta; antes un 0 (toca = 0, fraccion = 0) tambien salia -99
+    var fm = function (g, k, fmt) {
+      return ee.Number(ee.Algorithms.If(ee.Algorithms.IsEqual(g.get(k), null), -99, g.get(k))).format(fmt);
+    };
     var txt = st.toList(20).map(function (g) {
       g = ee.Feature(g);
       return ee.String(f(i, '%d')).cat(',').cat(fm(g, 'carril', '%d')).cat(',').cat(fm(g, 'toca', '%d'))
