@@ -1,0 +1,1480 @@
+// ============================================================================
+//  MODELO SAR - cuenca del rio Coello - UN SOLO SCRIPT DE TRABAJO
+//  ----------------------------------------------------------------------------
+//  Metodo base: Handwerger et al. (2022, NHESS), corrido POR EVENTO.
+//  Todos los cambios se hacen en este mismo script. La historia de cada cambio
+//  queda en "Revision history" de Earth Engine.
+//
+//  COMO SE USA
+//    MODO = 'PANEL' : panel a la izquierda. Se elige conjunto, evento, regla,
+//                     ventana y polarizacion; se pinta el mapa con las capas
+//                     del codigo original y el panel muestra el resultado y
+//                     los calculos para comprobarlo.
+//    MODO = 'LOTE'  : los 63 (FUENTE '63') o los 25 controles (FUENTE 'CTRL'),
+//                     una linea por escena en la consola con todas las
+//                     versiones a la vez.
+//
+//  VERSIONES (la base v1 se reproduce siempre: regla v1, ventana NORMAL, VH)
+//    v1 (2026-09-25) base: I > p99 de la caja, se entregan las 4 manchas mas
+//        grandes. Medido: 21 de 63 eventos, 2 de 25 controles (C2, C25).
+//    v2 (2026-09-25) CONTRASTE LOCAL (P32): cada pixel contra su anillo de
+//        30 a 150 m; 1 % de la caja con mayor contraste; 4 manchas de mayor
+//        contraste medio. 23 de 63, 3 de 25 (C13, C15, C23). Gana ID 2, 23,
+//        37, 39; pierde ID 9, 42. McNemar p = 0,69. No se adopta.
+//    v3 (2026-09-25) INTEGRADO: manchas de contraste ordenadas por contraste
+//        medio x area. 23 de 63, 3 de 25 (C13, C15, C23). Gana ID 2, 23, 37,
+//        61; pierde ID 9, 42. No se adopta.
+//        24 de los 63 no tienen NINGUNA mancha encima con v1, v2 ni v3: el
+//        limite es la senal, no el orden de las manchas. P32 cerrado.
+//    v4 (2026-09-26) VENTANA DE LA MISMA TEMPORADA (P39): regla v1, pero la
+//        ventana pre toma los mismos meses del ano que la post, k anos antes,
+//        sin pasar de FECHA_PRE. 26 de 63, 3 de 25 (C3, C13, C25). Gana 9,
+//        pierde 4, McNemar p = 0,27. La diferencia de lluvia entre ventanas
+//        no baja (176 -> 214 mm) y el AUC sin umbral no mejora (0,648 ->
+//        0,625). No se adopta.
+//    v5 (2026-09-26) POLARIZACION VV (P33): regla y ventana de la v1, con VV
+//        en vez de VH. 23 de 63, 2 de 25 (C24, C25). Gana ID 20, 24, 37, 39,
+//        62; pierde ID 9, 45, 56. McNemar p = 0,73. Sola no mejora.
+//        PERO VH y VV juntas (se detecta si lo detecta cualquiera de las dos,
+//        hasta 8 manchas): 26 de 63, 3 de 25 (C2, C24, C25). Gana 5 y no
+//        pierde ninguno (p = 0,06). Separacion sin umbral: AUC 0,648 -> 0,696
+//        (IC 95 % de la diferencia -0,005 a +0,107). Es la pista mas fuerte
+//        hasta ahora, pero entrega el doble de manchas: falta la version con 4
+//        (P41). Literatura: Lindsay et al. (2025) recomiendan usar las dos.
+//    v6 (2026-09-26) P41 VH Y VV CON 4 MANCHAS. Dos formas:
+//        'prom' = promedio del cambio en VH y en VV, mismo p99 y 4 manchas:
+//          26 de 63, 2 de 25 (C3, C25). Gana ID 20, 24, 25, 36, 37, 39, 62;
+//          pierde ID 45, 56. McNemar p = 0,18. AUC sin umbral 0,648 ->
+//          0,687 (IC 95 % de la diferencia -0,023 a +0,105). MEJOR VARIANTE:
+//          sube la deteccion sin bajar la especificidad (92 %) y entrega lo
+//          mismo que la v1 (4 manchas, 1 % de la caja). Pasa la regla de
+//          parada, pero no es significativa: se confirma solo en los 30.
+//        'uni'  = zonas marcadas por VH o por VV, 4 manchas mas grandes:
+//          23 de 63, 2 de 25. Rota eventos. No se adopta.
+//    v7 (2026-09-26) P42 BANDA L: ALOS-2 PALSAR-2 ScanSAR, HV, gamma0
+//        corregido por terreno, pixel de 25 m. Solo hay pasos descendentes.
+//        10 de 63, 4 de 25, AUC 0,471 (azar). Gana ID 36, 37, 38 pero pierde
+//        14. La resolucion de ScanSAR es muy gruesa para deslizamientos de
+//        menos de 1 ha. Descartada como detector; sirve solo como apoyo.
+//    v8 (2026-09-26) P31 CORRECCION POR PENDIENTE sobre el promedio VH y VV
+//        (Vollrath et al. 2020, modelo volumetrico), quitando layover y
+//        sombra. 29 de 63, 1 de 25 (C3). Frente a la v1 gana 10 (ID 3, 20,
+//        24, 25, 32, 36, 37, 39, 61, 62) y pierde 2 (ID 45, 56): McNemar
+//        p = 0,039. AUC sin umbral 0,648 -> 0,730 (IC 95 % de la diferencia
+//        +0,008 a +0,162). MEJOR VERSION Y PRIMERA MEJORA CON INTERVALO QUE NO
+//        TOCA EL CERO. Ojo: salio despues de ocho variantes; se confirma solo
+//        en los 30 de la prueba ciega.
+//        MEDIDAS DE DIAGNOSTICO: contraste VH y VV contra el anillo, cambio
+//        de NDVI de Sentinel-2 en las mismas ventanas (separa eventos de
+//        controles con AUC 0,958), fraccion del poligono en layover o sombra
+//        por paso, dias entre fechas, manchas entregadas con perdida de
+//        vegetacion.
+//    v9 (2026-09-26) PROPUESTAS DE OTRA IA probadas sobre la v8 (63 y 25):
+//        suavizado gaussiano leve: 25 de 63, 2 de 25 (pierde 9, 20, 32, 36);
+//        maximo de VH y VV y maximo absoluto con signo: 26 de 63, 1 de 25
+//          (gana 27, 45, 56; pierde 9, 24, 25, 32, 36, 39);
+//        orden por area x pendiente: 29 de 63, 1 de 25, los mismos 29;
+//        umbral sobre |I|: 29 de 63, 1 de 25 (gana 8, 23, 27, 45, 63;
+//          pierde 9, 24, 32, 36, 39);
+//        p98 con un solo paso: 28 de 63, 2 de 25 (pierde 39).
+//        NINGUNA supera a la v8. No se adopta ninguna; queda la v8.
+//        Se deja la correccion de thetaDe (mediana del angulo, no la primera
+//        imagen; solo afecta la medida de layover y sombra).
+//    v10 (2026-09-26) DOS IDEAS NUEVAS sobre la v8 (63 y 25):
+//      A. VENTANAS MAS LARGAS (Handwerger et al. 2022 hallan mejor AUC con mas
+//         datos): pre 365/post 180: 29 de 63, 2 de 25; pre 365/post 365: 31 de
+//         63, 3 de 25 (C3, C16, C25), AUC 0,729 -> 0,755 (IC 95 % de la
+//         diferencia -0,057 a +0,101); pre 730/post 365: 30 de 63, 3 de 25.
+//         Suben un poco la deteccion pero tambien las falsas alarmas.
+//      B. EL RADAR PROPONE Y EL OPTICO FILTRA: de las manchas de la v8 se
+//         quitan las que no perdieron NDVI (Sentinel-2 con Cloud Score+ por
+//         pixel) y se entregan las 4 mas grandes que quedan; sin dato optico
+//         decide solo el radar. Umbral 0,05: 32 de 63, 1 de 25 (C3); gana 10,
+//         23, 27, 31, 40, 63 y pierde 3, 20, 49 (McNemar p = 0,51). Umbral
+//         0,10: 31 de 63, 0 de 25. Con el filtro original de < 10 % de nubes
+//         por imagen solo 9 de 63 eventos tienen imagen pre y post, y el
+//         filtro no sirve (28 de 63). Con Cloud Score+ por pixel, 60 de 63.
+//         Las nubes NO afectan al radar; solo a la parte optica.
+//         MEJOR CANDIDATA (umbral 0,05): pasa la regla de parada. Es un
+//         cambio de metodo (radar + optico); decidir con el director.
+//         DESCARTADA el 2026-09-26 por decision del autor: la tesis evalua solo
+//         el radar; el optico queda como anexo exploratorio.
+//    v11 (2026-09-26) AJUSTES SOLO CON RADAR sobre la v8 (63 y 25):
+//      pendiente minima 15 grados: 29 de 63, 0 de 25 (gana 27, pierde 9);
+//      PENDIENTE MINIMA 20 GRADOS: 30 de 63, 0 de 25 (gana 27 y 40, pierde 9;
+//        frente a la v1 +12/-3, McNemar p = 0,035; AUC 0,729 -> 0,733). Es la
+//        UNICA que sirve: sube uno y quita la falsa alarma. MEJOR VERSION (v11).
+//      caja de 500 m: 32 de 63 pero 5 de 25 (especificidad 80 %). Descartada.
+//      caja de 2 km: 21 de 63, 0 de 25. Descartada.
+//      filtro de Lee por imagen: 25 de 63, 3 de 25. Descartada.
+//      persistencia del cambio: 29 de 63, 2 de 25. Descartada.
+//      pendiente 20 + ventanas de 365 dias: 29 de 63, 4 de 25. Descartada.
+//    v12 (2026-09-27) INDICES DE VEGETACION RADAR y CRITERIO DE SOLAPE (63 y 25):
+//      relacion VH/VV: 12 de 63, 4 de 25. RVI: 11 de 63, 3 de 25. v11 + VH/VV:
+//        22 de 63, 1 de 25. Ninguno supera a la v11; se descartan como reemplazo.
+//        Ojo: VH/VV detecta 7 que la v11 no ve (ID 4, 7, 16, 43, 45, 53, 56):
+//        sirve como variable para un clasificador futuro, no sola.
+//      criterio "cobertura del poligono por las 4 manchas >= 1 %": la v11 pasa
+//        de 30 a 29 (pierde ID 24, que solo roza el borde). En las variantes
+//        quita las falsas alarmas de controles grandes (11 a 20 ha). Se reporta
+//        junto al criterio "toca"; no reemplaza el resultado de la prueba ciega.
+//    v13 (2026-09-27) PRUEBA OMNIBUS PRE/POST con todas las imagenes (P54), con
+//      la correccion por pendiente y la pendiente minima de 20 de la v11:
+//      29 de 63, 3 de 25 (controles de 11 a 20 ha); con cobertura >= 2 %: 29 de
+//      63 y 0 de 25, contra 28 y 0 de la v11. AUC 0,732, igual a la v11. Gana
+//      ID 8, 45, 56, 63 y pierde 3, 42, 62: rota eventos, no mejora. Queda la v11.
+//    v14 (2026-09-27) DETECCION POR OBJETOS al estilo de Esposito et al. (2020): SNIC
+//      sobre el cambio de la v11 y decision por segmentos (63 y 25):
+//      4 segmentos de 50 m de mayor cambio medio: 29 de 63, 5 de 25 (C3, C13, C21,
+//        C23, C25); gana ID 2, 7, 60 y pierde 20, 27, 32, 36. Descartada.
+//      4 segmentos de 30 m: 26 de 63, 2 de 25 (C21, C25). Descartada.
+//      filtro estadistico (media + 2 desv.) y 4 objetos mas grandes, 50 m: 25 de 63,
+//        4 de 25; 30 m: 22 de 63, 2 de 25 (McNemar p = 0,021 en contra). Descartadas.
+//      NINGUNA supera a la v11 (30 de 63, 0 de 25). Queda la v11.
+//    v15 (2026-09-27) EVIDENCIAS DE RADAR QUE LLENAN LOS HUECOS DE LA v11 (63 y 25):
+//      prueba t por pixel, promedio: 27 de 63, 2 de 25. PWTT (mayor |t|): 29, 2.
+//      fusion v11 + VH/VV: 29, 2. v11 + prueba t: 30, 1. v11 + VH/VV + subida de
+//      la senal: 30, 0 (gana ID 8, 16, 23, 45, 56; pierde 24, 27, 32, 36, 39).
+//      Consenso (promedio de v11, VH/VV y t): 29, 2. Con 4 manchas NINGUNA supera a
+//      la v11: cada evidencia gana unos eventos y pierde otros.
+//      PERO los eventos que ganan son otros: al menos una evidencia ve 37 de 63.
+//      REGLA v15 = DOS CARRILES: 4 manchas de la v11 + 4 manchas de la fusion
+//      (v11 + VH/VV + subida). 35 de 63 y 0 de 25 (gana ID 8, 16, 23, 45, 56 y no
+//      pierde ninguno; McNemar p = 0,063). Con el mismo presupuesto de 8 manchas,
+//      la v11 sola da 33 de 63 y 4 de 25: la ganancia no es por entregar mas, es
+//      por la evidencia nueva. Salio despues de seis variantes: falta confirmarla
+//      con controles que no se usaron para escogerla.
+//      CONFIRMACION (2026-09-27, con visto bueno del autor, GRUPO 'V15C', FUENTE '30'):
+//      en los 12 controles independientes la v15 da las MISMAS 4 falsas alarmas que la
+//      v11 (los 4 controles mas grandes, 5,7 a 58,3 ha): la segunda via no agrega
+//      ninguna. En los 18 deslizamientos: 7 contra 6 (gana el ID 16, que ya estaba en
+//      los 63). Con 63 eventos y 37 controles: v11 47,6 % / 89,2 % / kappa 0,317;
+//      v15 55,6 % / 89,2 % / kappa 0,395. La ganancia en deteccion solo se confirma de
+//      verdad con deslizamientos nuevos (P52).
+//    v18 (2026-09-27) POR QUE UNOS SE VEN BIEN Y OTROS NO (63 y dibujo v16):
+//      mascara extra de geometria (quitar laderas casi de frente o de espaldas al
+//      radar): margen 10 grados 31 de 63; 20 grados 27 de 63 -> pierde deslizamientos
+//      reales, que estan justo en esas laderas. Descartada.
+//      promedio de pasos con dato por pixel: 34 de 63. Descartada.
+//      cambio solo entre imagenes de la misma orbita relativa: 32 de 63. Descartada.
+//      DIAGNOSTICO DE FECHAS (GRUPO 'FECHAS', NDVI optico solo para revisar): en 8 de
+//      63 el deslizamiento ya se ve en la ventana pre (ID 2, 4, 14, 15, 20, 35, 39, 55),
+//      en 8 aparece en parte antes (16, 37, 46, 48, 53, 56, 58, 62) y en 9 no hay huella
+//      optica despues (10, 11, 17, 22, 26, 29, 42, 59, 60). Con fechas coherentes (38)
+//      la v15 detecta 66 %; sin huella optica, 11 %. El ID 35 cambio entre oct. de 2021
+//      y mayo de 2022, antes de la fecha pre (2022-09-25): el radar compara dos
+//      ventanas en que el deslizamiento ya estaba (GRUPO 'SERIE').
+//    v17 (2026-09-27) PANEL AUTOMATICO: solo se elige conjunto (63, controles o prueba
+//      ciega de 30) y evento; corre solo con la mejor version (v15 + dibujo v16), igual
+//      para todos los eventos. Agrega un diagnostico (v1, carril v11, carril fusion) que
+//      no entra en las metricas. Las capas del mapa no cambian.
+//    v16 (2026-09-27) DIBUJO DEL DESLIZAMIENTO, sin cambiar la deteccion (GRUPO 'V16').
+//      Las 8 manchas de la v15 crecen a los pixeles vecinos con un poco menos de cambio.
+//      Medido en los 35 eventos que detecta la v15, con las manchas que tocan el poligono:
+//                              cubre   dentro  IoU mediana  IoU >= 0,3
+//        v15 sin crecer        17 %    69 %    0,16         10
+//        p95, pend 20          34 %    64 %    0,28         14
+//        p90, pend 20          43 %    45 %    0,27         14
+//        p95, pend 10          35 %    64 %    0,29         15
+//        p90, pend 10          43 %    45 %    0,27         15
+//        p95, pend 10, suave   44 %    54 %    0,29         16   <- ELEGIDA (DIB16)
+//        p90, pend 10, suave   55 %    39 %    0,29         17   (dibuja mucho por fuera)
+//        crecer 300 m          igual que 150 m
+//      Mejora la IoU en 28 eventos y la baja en 6. Bajar la pendiente de 20 a 10 casi no
+//      cambia nada. En los mayores de 1 ha la IoU mediana pasa de 0,13 a 0,24.
+//    CAPAS S2 (2026-09-26): si la ventana no tiene imagenes con < 10 % de
+//        nubes (el filtro original), la capa quedaba vacia y no se podia
+//        prender. Ahora usa Cloud Score+ en ese caso.
+// ============================================================================
+
+// ------------------------------------------------------------------ AJUSTES
+var MODO   = 'LOTE';    // 'PANEL' o 'LOTE'
+var FUENTE = 'CTRL';    // para MODO 'LOTE': '63', 'CTRL', '70R' o '30' (prueba ciega)
+var DESDE = 13, HASTA = 25;
+var GRUPO = 'MANCHAS';     // v11: 'A' (pendiente y caja), 'B' (Lee y persistencia), 'C'; 'ROC' = curva ROC y kappa de v1 y v11
+var V15 = ['TT20', 'TA20', 'FDR20', 'FDT20', 'FDRU20', 'FSUM20'];   // variantes de la v15 que corre el LOTE
+// FUENTE '70R' = los 45 deslizamientos confirmados del archivo de 70 (posiciones 0, 1 y 27 a 69)
+
+var LADO = 1000, VPRE = 180, VPOST = 180, PCT = 99, PEND_MIN = 10;
+var R_IN = 30, R_OUT = 150;   // circulo y anillo del contraste local, en metros
+var TOP_N = 4;
+var PROY = ee.Projection('EPSG:32618').atScale(10);
+
+var inv = ee.FeatureCollection('projects/tesis-508001/assets/INVENTARIO_COELLO_63');
+var lista70 = ee.FeatureCollection('projects/tesis-508001/assets/INVENTARIO_70').toList(100);
+// prueba ciega (30): posiciones 0 a 11 = controles, 12 a 29 = deslizamientos. Usada con
+// la v1 y la v11 (2026-09-26) y con la v15 (2026-09-27, con visto bueno del autor).
+var lista30 = ee.FeatureCollection('projects/tesis-509219/assets/INVENTARIO_30').toList(30);
+var nasadem = ee.Image('NASA/NASADEM_HGT/001');
+var fabCol = ee.ImageCollection('projects/sat-io/open-datasets/FABDEM');
+var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY').select('precipitation');
+var palsar = ee.ImageCollection('JAXA/ALOS/PALSAR-2/Level2_2/ScanSAR');
+var s1base = ee.ImageCollection('COPERNICUS/S1_GRD').filter(ee.Filter.eq('instrumentMode', 'IW'));
+var s2col = ee.ImageCollection('COPERNICUS/S2_HARMONIZED');
+var csPlus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED');
+// normalize: false es obligatorio; con el kernel normalizado el anillo sale en cero
+var kIn  = ee.Kernel.circle({radius: R_IN,  units: 'meters', normalize: false});
+var kOut = ee.Kernel.circle({radius: R_OUT, units: 'meters', normalize: false});
+var sumCount = ee.Reducer.sum().combine(ee.Reducer.count(), '', true);
+
+// Puestos de la corrida en lote del 2026-09-26 (v1, v2, v3, v4), para comparar
+// lo que muestra el panel con lo que dio la consola. -1 = ninguna mancha toca.
+var REF_63 = {1:[-1,-1,-1,-1],2:[5,4,2,1],3:[-1,-1,-1,-1],4:[-1,-1,-1,18],5:[-1,-1,-1,-1],6:[1,1,1,1],7:[-1,-1,-1,-1],8:[-1,-1,-1,50],9:[1,-1,-1,1],10:[14,-1,-1,8],11:[-1,-1,-1,-1],12:[1,1,1,1],13:[-1,-1,-1,-1],14:[-1,-1,-1,-1],15:[2,1,4,19],16:[-1,-1,-1,2],17:[-1,-1,-1,-1],18:[1,1,1,1],19:[1,1,1,1],20:[55,-1,-1,1],21:[6,6,9,37],22:[43,-1,-1,-1],23:[41,3,2,16],24:[-1,-1,-1,3],25:[14,-1,-1,16],26:[-1,-1,-1,4],27:[-1,12,9,-1],28:[1,1,1,1],29:[-1,-1,-1,-1],30:[1,1,1,1],31:[7,-1,-1,6],32:[39,-1,-1,-1],33:[-1,-1,-1,-1],34:[1,1,1,1],35:[2,1,1,6],36:[-1,-1,-1,4],37:[14,3,4,3],38:[-1,-1,-1,-1],39:[27,3,5,6],40:[7,-1,-1,38],41:[1,1,1,1],42:[3,10,11,3],43:[-1,-1,-1,-1],44:[1,1,1,1],45:[3,1,3,2],46:[1,1,1,1],47:[-1,-1,-1,-1],48:[-1,-1,-1,-1],49:[1,1,1,1],50:[2,2,2,20],51:[-1,-1,-1,-1],52:[1,1,1,1],53:[43,-1,-1,-1],54:[1,1,1,1],55:[-1,-1,-1,-1],56:[2,4,2,9],57:[1,1,1,1],58:[-1,-1,-1,-1],59:[-1,17,17,41],60:[-1,-1,-1,-1],61:[5,6,3,-1],62:[5,6,5,3],63:[5,-1,-1,3]};
+var REF_CTRL = {2:[4,-1,-1,9],3:[6,11,9,2],4:[14,6,6,-1],5:[9,-1,-1,17],6:[39,-1,-1,38],7:[-1,-1,-1,-1],8:[-1,-1,-1,-1],9:[20,-1,-1,31],10:[-1,-1,-1,-1],11:[-1,-1,-1,29],12:[-1,-1,-1,-1],13:[50,1,2,4],14:[19,9,9,-1],15:[13,3,3,-1],16:[-1,-1,-1,5],17:[14,-1,-1,5],18:[26,11,11,-1],19:[-1,-1,-1,14],20:[-1,-1,-1,-1],21:[-1,-1,-1,-1],22:[44,-1,-1,39],23:[5,4,4,5],24:[-1,-1,-1,-1],25:[4,8,8,1],26:[-1,-1,-1,-1]};
+var CAUSA_63 = {1:'senal invertida',2:'no compite',3:'sin senal',4:'senal invertida',5:'muy pequeno',7:'senal debil',8:'muy pequeno',10:'muy pequeno',11:'senal invertida',13:'muy pequeno',14:'senal debil',16:'senal invertida',17:'senal invertida',20:'sin senal',21:'senal debil',22:'senal invertida',23:'sin senal',24:'senal debil',25:'senal debil',26:'sin senal',27:'senal invertida',29:'senal invertida',31:'senal debil',32:'senal invertida',33:'sin senal',36:'sin senal',37:'senal debil',38:'senal invertida',39:'senal invertida',40:'sin senal',43:'sin senal',47:'no compite',48:'sin senal',51:'muy pequeno',53:'sin senal',55:'sin senal',58:'sin senal',59:'sin senal',60:'senal invertida',61:'no compite',62:'no compite',63:'senal debil'};
+// ============================================================================
+//  EL MODELO: todo el calculo de un evento
+// ============================================================================
+// ventana pre: 'NORMAL' = los VPRE dias antes de FECHA_PRE (v1).
+// 'TEMPORADA' = los mismos meses de la ventana post, k anos antes, con k el
+// menor numero de anos que deja la ventana entera antes de FECHA_PRE (v4).
+function ventanaPre(fPre, fPos, modo, vpre, vpost) {
+  if (modo === 'NORMAL') return {ini: fPre.advance(-vpre, 'day'), fin: fPre};
+  var k = fPos.difference(fPre, 'day').add(vpost).divide(365).ceil();
+  var ini = fPos.advance(k.multiply(-365), 'day');
+  return {ini: ini, fin: ini.advance(vpost, 'day')};
+}
+
+// opc = {ventana: 'NORMAL' o 'TEMPORADA', polz: 'VH' o 'VV'}
+function modelo(pol, fPre, fPos, opc) {
+  // v11: la mejor version = v8 con mascara de pendiente minima de 20 grados
+  if (opc.polz === 'VHVVc20') opc = {ventana: opc.ventana, polz: 'VHVVc', pendMin: 20, margen: opc.margen, orb: opc.orb, pista: opc.pista};
+  // v12 (P53): indices de vegetacion con radar, con la mascara de pendiente de la v11
+  if (opc.polz === 'RAT20') opc = {ventana: opc.ventana, polz: 'RAT', pendMin: 20};
+  if (opc.polz === 'RVI20') opc = {ventana: opc.ventana, polz: 'RVI', pendMin: 20};
+  if (opc.polz === 'MIX20') opc = {ventana: opc.ventana, polz: 'MIX', pendMin: 20};
+  // v13 (P54): prueba estadistica de cambio con todas las imagenes, pendiente 20
+  if (opc.polz === 'OMN20') opc = {ventana: opc.ventana, polz: 'OMN', pendMin: 20};
+  // v15: prueba t por pixel y fusion de evidencias de radar, pendiente 20
+  if (['TT20', 'TA20', 'FDR20', 'FDT20', 'FDRU20', 'FSUM20'].indexOf(opc.polz) >= 0)
+    opc = {ventana: opc.ventana, polz: opc.polz.replace('20', ''), pendMin: 20, margen: opc.margen, orb: opc.orb, pista: opc.pista};
+  // v10: largo de las ventanas en dias (por defecto VPRE y VPOST = 180)
+  var vpre = opc.vpre || VPRE, vpost = opc.vpost || VPOST;
+  var vp = ventanaPre(fPre, fPos, opc.ventana, vpre, vpost);
+  // v11: tamano de la caja (por defecto LADO = 1000 m)
+  var AOI = pol.centroid(1).buffer((opc.lado || LADO) / 2).bounds();
+
+  // DEM - setDefaultProjection obligatorio o ee.Terrain.slope da casi cero
+  var fab = fabCol.filterBounds(AOI.buffer(2000));
+  var elevation = fab.mosaic().setDefaultProjection(ee.Image(fab.first()).projection())
+                     .select(0).rename('elevation').clip(AOI.buffer(500));
+  var slope = ee.Terrain.slope(elevation).clip(AOI);
+  var aspect = ee.Terrain.aspect(elevation).clip(AOI);
+  // v11: pendiente minima de la mascara (por defecto PEND_MIN = 10 grados)
+  var mascara = nasadem.select('swb').eq(0).and(slope.gte(opc.pendMin || PEND_MIN));
+
+  // Geometria de vista de Sentinel-1 sobre el Coello: rumbo medido en la
+  // cuenca (asc -11,97 grados, desc -168,03) + 90 = direccion de vista.
+  var D2R = Math.PI / 180, NOVENTA = Math.PI / 2;
+  var vista = {ASCENDING: 78.03, DESCENDING: 281.97};
+  // pendiente en la direccion de vista (alfa_r), en radianes
+  var alfaR = function (phiI) {
+    var phiR = ee.Image.constant(phiI).subtract(aspect).multiply(D2R);
+    return slope.multiply(D2R).tan().multiply(phiR.cos()).atan();
+  };
+  // pixeles en layover (alfa_r > theta) o sombra (alfa_r < theta - 90)
+  var malaGeom = function (phiI, thetaGrados) {
+    var a = alfaR(phiI), th = ee.Image.constant(thetaGrados).multiply(D2R);
+    return a.gt(th).or(a.lt(th.subtract(NOVENTA)));
+  };
+
+  // Cambio I = mediana pre menos mediana post (dB), por sentido de paso, y
+  // promedio de ascendente y descendente cuando estan los dos (Handwerger).
+  var vP = ee.Filter.date(vp.ini, vp.fin);
+  var vQ = ee.Filter.date(fPos, fPos.advance(vpost, 'day'));
+  var cambio = function (col, banda, campoPaso, asc, desc, vQx) {
+    var fQ = vQx || vQ;   // v11: ventana post distinta (persistencia)
+    var A = col.filter(ee.Filter.eq(campoPaso, asc));
+    var D = col.filter(ee.Filter.eq(campoPaso, desc));
+    var ap = A.filter(vP), aq = A.filter(fQ), dp = D.filter(vP), dq = D.filter(fQ);
+    var hA = ap.size().gt(0).and(aq.size().gt(0)), hD = dp.size().gt(0).and(dq.size().gt(0));
+    var cero = ee.Image.constant(0).rename(banda).toFloat();
+    var iA = ee.Image(ee.Algorithms.If(hA, ee.Image(ap.median()).subtract(ee.Image(aq.median())), cero));
+    var iD = ee.Image(ee.Algorithms.If(hD, ee.Image(dp.median()).subtract(ee.Image(dq.median())), cero));
+    // v18: pista = comparar solo imagenes de la MISMA orbita relativa (misma geometria de
+    // toma). Antes se juntaban todas las del mismo sentido de paso; si la ventana pre y la
+    // post venian de orbitas distintas (p. ej. al perderse Sentinel-1B en dic. de 2021 o al
+    // entrar Sentinel-1C en 2025), aparecia un cambio falso de varios dB en las laderas.
+    // Se calcula el cambio por orbita y se promedian las orbitas que tengan pre y post.
+    if (opc.pista) {
+      var cT = col.filter(ee.Filter.or(vP, fQ));
+      var orbs = cT.aggregate_array('relativeOrbitNumber_start').distinct();
+      var imgs = orbs.map(function (o) {
+        var c = cT.filter(ee.Filter.eq('relativeOrbitNumber_start', o));
+        var p = c.filter(vP), q = c.filter(fQ);
+        return ee.Algorithms.If(p.size().gt(0).and(q.size().gt(0)),
+                 ee.Image(p.median()).subtract(ee.Image(q.median())).rename(banda).toFloat(), null);
+      }, true);
+      var icT = ee.ImageCollection.fromImages(imgs);
+      return {I: ee.Image(ee.Algorithms.If(icT.size().gt(0), icT.mean(), cero)),
+              nap: ap.size(), naq: aq.size(), ndp: dp.size(), ndq: dq.size(), ambos: hA.and(hD),
+              norb: icT.size()};
+    }
+    // v18: orb = en cada pixel, promedio de los pasos que tengan dato (si un paso esta
+    // enmascarado ahi, se usa el otro en vez de perder el pixel)
+    if (opc.orb) {
+      var vac = ee.Image.constant(0).rename(banda).toFloat().updateMask(0);
+      var Io = ee.ImageCollection([ee.Image(ee.Algorithms.If(hA, iA, vac)).rename(banda).toFloat(),
+                                   ee.Image(ee.Algorithms.If(hD, iD, vac)).rename(banda).toFloat()]).mean();
+      return {I: ee.Image(ee.Algorithms.If(hA.or(hD), Io, cero)),
+              nap: ap.size(), naq: aq.size(), ndp: dp.size(), ndq: dq.size(), ambos: hA.and(hD)};
+    }
+    return {I: ee.Image(ee.Algorithms.If(hA.and(hD), iA.add(iD).divide(2),
+                 ee.Algorithms.If(hA, iA, ee.Algorithms.If(hD, iD, cero)))),
+            nap: ap.size(), naq: aq.size(), ndp: dp.size(), ndq: dq.size(), ambos: hA.and(hD)};
+  };
+  // Sentinel-1 (banda C) en la polarizacion pedida
+  var s1 = function (polz) {
+    var col = s1base.filter(ee.Filter.listContains('transmitterReceiverPolarisation', polz))
+      .select(polz).filterBounds(AOI).map(function (im) {
+        return im.updateMask(im.mask().and(im.lt(-30.0).not()));
+      });
+    return cambio(col, polz, 'orbitProperties_pass', 'ASCENDING', 'DESCENDING');
+  };
+  // P31: Sentinel-1 corregido por pendiente, modelo volumetrico de Vollrath et
+  // al. (2020): gamma0_plano = sigma0 / cos(theta) / [tan(90-theta+alfa_r) /
+  // tan(90-theta)], y se quitan los pixeles en layover o sombra.
+  // v11: filtro de Lee por imagen (ventana de 5 x 5 pixeles, ENL = 4,4 de
+  // Sentinel-1 IW GRD), en potencia lineal, antes de la correccion por pendiente
+  var lee = function (x) {
+    var k = ee.Kernel.square({radius: 2, units: 'pixels'});
+    var m = x.reduceNeighborhood({reducer: ee.Reducer.mean(), kernel: k});
+    var v = x.reduceNeighborhood({reducer: ee.Reducer.variance(), kernel: k});
+    var cu2 = 1 / 4.4;
+    var b = v.subtract(m.pow(2).multiply(cu2)).divide(v.multiply(1 + cu2)).max(0);
+    return m.add(b.multiply(x.subtract(m)));
+  };
+  var s1c = function (polz, vQx) {
+    var col = s1base.filter(ee.Filter.listContains('transmitterReceiverPolarisation', polz))
+      .filterBounds(AOI).map(function (im) {
+        var paso = ee.String(im.get('orbitProperties_pass'));
+        var phiI = ee.Number(ee.Algorithms.If(paso.equals('ASCENDING'), vista.ASCENDING, vista.DESCENDING));
+        var th = im.select('angle').multiply(D2R);
+        var a = alfaR(phiI);
+        var corr = ee.Image(NOVENTA).subtract(th).add(a).tan().divide(ee.Image(NOVENTA).subtract(th).tan());
+        var lin = ee.Image(10).pow(im.select(polz).divide(10));
+        if (opc.lee) lin = lee(lin);
+        var g = lin.divide(th.cos()).divide(corr);
+        // v18: margen (grados) = ademas de layover y sombra, quitar las laderas casi de frente
+        // al sensor (compresion fuerte) y casi de espaldas (senal debil)
+        var M = (opc.margen || 0) * D2R;
+        var ok = a.lt(th.subtract(M)).and(a.gt(th.subtract(NOVENTA).add(M)));
+        return g.log10().multiply(10).rename(polz)
+                .updateMask(ok.and(im.select(polz).mask()).and(im.select(polz).lt(-30.0).not()))
+                .copyProperties(im, ['system:time_start', 'orbitProperties_pass', 'relativeOrbitNumber_start']);
+      });
+    return cambio(col, polz, 'orbitProperties_pass', 'ASCENDING', 'DESCENDING', vQx);
+  };
+  // v13 (P54): prueba de razon de verosimilitud (omnibus) entre la ventana pre y la
+  // post, con TODAS las imagenes y no solo con sus medianas (Conradsen et al. 2016;
+  // Canty et al. 2020, Remote Sensing 12(1):46, que la llevan a Sentinel-1 GRD en
+  // Earth Engine). Con k1 imagenes antes, k2 despues y media x en potencia lineal
+  // (gamma0 corregido por pendiente, como la v11), para cada polarizacion:
+  //   G = 2 m [ N ln(x_todas) - k1 ln(x_pre) - k2 ln(x_post) ],  N = k1 + k2,
+  // con m = 4,4 looks equivalentes de Sentinel-1 IW GRD. Sin cambio, G sigue una
+  // chi-cuadrado de 1 grado de libertad. Se suman VV y VH, se le pone el signo de
+  // VH (positivo = la senal bajo, como en la v1) y se promedian asc y desc.
+  var s1lin = function (polz) {
+    return s1base.filter(ee.Filter.listContains('transmitterReceiverPolarisation', polz))
+      .filterBounds(AOI).map(function (im) {
+        var paso = ee.String(im.get('orbitProperties_pass'));
+        var phiI = ee.Number(ee.Algorithms.If(paso.equals('ASCENDING'), vista.ASCENDING, vista.DESCENDING));
+        var th = im.select('angle').multiply(D2R);
+        var a = alfaR(phiI);
+        var corr = ee.Image(NOVENTA).subtract(th).add(a).tan().divide(ee.Image(NOVENTA).subtract(th).tan());
+        var g = ee.Image(10).pow(im.select(polz).divide(10)).divide(th.cos()).divide(corr);
+        var ok = a.lt(th).and(a.gt(th.subtract(NOVENTA)));
+        return g.rename('X').toFloat()
+                .updateMask(ok.and(im.select(polz).mask()).and(im.select(polz).lt(-30.0).not()))
+                .copyProperties(im, ['system:time_start', 'orbitProperties_pass', 'relativeOrbitNumber_start']);
+      });
+  };
+  var omnibus = function () {
+    var ENL = 4.4;
+    var parte = function (paso) {
+      var r = ['VV', 'VH'].map(function (pz) {
+        var c = s1lin(pz).filter(ee.Filter.eq('orbitProperties_pass', paso));
+        var pre = c.filter(vP), pos = c.filter(vQ);
+        var k1 = pre.count(), k2 = pos.count(), N = k1.add(k2);
+        var x1 = pre.mean(), x2 = pos.mean();
+        var xa = x1.multiply(k1).add(x2.multiply(k2)).divide(N);
+        var G = N.multiply(xa.log()).subtract(k1.multiply(x1.log())).subtract(k2.multiply(x2.log()))
+                 .multiply(2 * ENL);
+        return {G: G, baja: x1.gt(x2), hay: pre.size().gt(0).and(pos.size().gt(0))};
+      });
+      var S = r[0].G.add(r[1].G).multiply(r[1].baja.multiply(2).subtract(1)).rename('I').toFloat();
+      return {S: S, hay: r[0].hay.and(r[1].hay)};
+    };
+    var A = parte('ASCENDING'), D = parte('DESCENDING');
+    var cero = ee.Image.constant(0).rename('I').toFloat();
+    var k = s1c('VH');   // solo para contar imagenes en el panel
+    return {I: ee.Image(ee.Algorithms.If(A.hay.and(D.hay), A.S.add(D.S).divide(2),
+                 ee.Algorithms.If(A.hay, A.S, ee.Algorithms.If(D.hay, D.S, cero)))),
+            nap: k.nap, naq: k.naq, ndp: k.ndp, ndq: k.ndq, ambos: A.hay.and(D.hay)};
+  };
+  // v12 (P53): indices de vegetacion con radar, en imagenes que traen VV y VH.
+  // 'RAT' = relacion VH/VV en dB (VH - VV): baja cuando se pierde vegetacion, y la
+  //   correccion por pendiente se cancela porque afecta igual a las dos.
+  // 'RVI' = indice de vegetacion radar de doble polarizacion, 4 VH / (VV + VH), lineal.
+  // El cambio es pre menos post, como siempre: positivo = se perdio vegetacion.
+  var s1idx = function (tipo) {
+    var col = s1base.filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+      .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+      .filterBounds(AOI).map(function (im) {
+        var vv = im.select('VV'), vh = im.select('VH');
+        var ok = vv.mask().and(vh.mask()).and(vv.lt(-30.0).not()).and(vh.lt(-30.0).not());
+        if (opc.margen) {   // v18: la misma mascara de geometria que s1c
+          var paso = ee.String(im.get('orbitProperties_pass'));
+          var phiI = ee.Number(ee.Algorithms.If(paso.equals('ASCENDING'), vista.ASCENDING, vista.DESCENDING));
+          var th = im.select('angle').multiply(D2R), a = alfaR(phiI), M = opc.margen * D2R;
+          ok = ok.and(a.lt(th.subtract(M))).and(a.gt(th.subtract(NOVENTA).add(M)));
+        }
+        var x = tipo === 'RAT' ? vh.subtract(vv)
+              : ee.Image(10).pow(vh.divide(10)).multiply(4)
+                  .divide(ee.Image(10).pow(vv.divide(10)).add(ee.Image(10).pow(vh.divide(10))));
+        return x.rename('R').updateMask(ok).copyProperties(im, ['system:time_start', 'orbitProperties_pass', 'relativeOrbitNumber_start']);
+      });
+    return cambio(col, 'R', 'orbitProperties_pass', 'ASCENDING', 'DESCENDING');
+  };
+  // ALOS-2 PALSAR-2 ScanSAR (banda L), HV, gamma0 en dB = 20 log10(DN) - 83,
+  // solo pixeles validos segun MSK (bits 0-2 = 1)
+  var banL = function () {
+    var col = palsar.filterBounds(AOI).filter(ee.Filter.listContains('Polarizations', 'HV'))
+      .map(function (im) {
+        var db = im.select('HV').log10().multiply(20).subtract(83).rename('HV');
+        return db.updateMask(im.select('MSK').bitwiseAnd(7).eq(1))
+                 .copyProperties(im, ['system:time_start', 'PassDirection']);
+      });
+    return cambio(col, 'HV', 'PassDirection', 'Ascending', 'Descending');
+  };
+  // ---- v15 (2026-09-27): EVIDENCIAS DE RADAR QUE LLENAN LOS HUECOS DE LA v11
+  // (a) Prueba t por pixel (PWTT, Ballinger, Remote Sensing of Environment 2025):
+  //     con TODAS las imagenes de cada ventana, t = (media pre - media post) /
+  //     raiz(var pre / n pre + var post / n post), en dB con la correccion por
+  //     pendiente de la v11, por polarizacion y por sentido de paso. A diferencia de
+  //     la mediana, pesa el cambio contra lo que ese pixel varia normalmente: un
+  //     cultivo que sube y baja todo el ano da t bajo; un bosque estable que cae, t alto.
+  //     'TT' = promedio de los t (positivo = bajo la senal, como la v11).
+  //     'TA' = el mayor |t| de los cuatro (VV, VH, asc, desc), como el PWTT original.
+  // (b) Fusion: cada evidencia se lleva a la misma escala de la caja,
+  //     z = (x - mediana) / (p99 - mediana), y se toma la mayor en cada pixel.
+  //     Luego sigue la regla de la v1 (p99 y 4 manchas mas grandes).
+  //     'FDR'  = v11 + perdida de vegetacion radar (VH/VV, ve 7 eventos que la v11 no ve)
+  //     'FDT'  = v11 + prueba t
+  //     'FDRU' = v11 + VH/VV + subida de la senal (escarpes que miran al sensor y
+  //              deposito; Lindsay et al. 2025; Burrows et al. 2022)
+  //     'FSUM' = consenso: PROMEDIO (no el mayor) de v11, VH/VV y prueba t; un pixel
+  //              sube solo si varias evidencias coinciden
+  var colC = function (polz) {
+    return s1base.filter(ee.Filter.listContains('transmitterReceiverPolarisation', polz))
+      .filterBounds(AOI).map(function (im) {
+        var paso = ee.String(im.get('orbitProperties_pass'));
+        var phiI = ee.Number(ee.Algorithms.If(paso.equals('ASCENDING'), vista.ASCENDING, vista.DESCENDING));
+        var th = im.select('angle').multiply(D2R);
+        var a = alfaR(phiI);
+        var corr = ee.Image(NOVENTA).subtract(th).add(a).tan().divide(ee.Image(NOVENTA).subtract(th).tan());
+        var g = ee.Image(10).pow(im.select(polz).divide(10)).divide(th.cos()).divide(corr);
+        var ok = a.lt(th).and(a.gt(th.subtract(NOVENTA)));
+        return g.log10().multiply(10).rename('X').toFloat()
+                .updateMask(ok.and(im.select(polz).mask()).and(im.select(polz).lt(-30.0).not()))
+                .copyProperties(im, ['system:time_start', 'orbitProperties_pass', 'relativeOrbitNumber_start']);
+      });
+  };
+  var pruebaT = function (tipo) {
+    var vacia = ee.Image.constant(0).rename('I').toFloat().updateMask(0);
+    var ts = [];
+    ['VV', 'VH'].forEach(function (pz) {
+      var c = colC(pz);
+      ['ASCENDING', 'DESCENDING'].forEach(function (paso) {
+        var cp = c.filter(ee.Filter.eq('orbitProperties_pass', paso));
+        var pre = cp.filter(vP), pos = cp.filter(vQ);
+        var n1 = pre.count(), n2 = pos.count();
+        var t = pre.mean().subtract(pos.mean())
+                  .divide(pre.reduce(ee.Reducer.sampleVariance()).divide(n1)
+                          .add(pos.reduce(ee.Reducer.sampleVariance()).divide(n2)).sqrt())
+                  .updateMask(n1.gte(3).and(n2.gte(3)));
+        ts.push(ee.Image(ee.Algorithms.If(pre.size().gte(3).and(pos.size().gte(3)),
+                  t.rename('I').toFloat(), vacia)));
+      });
+    });
+    var T = ee.ImageCollection(ts);
+    return tipo === 'TA' ? T.map(function (x) { return x.abs(); }).max().rename('I')
+                         : T.mean().rename('I');
+  };
+  var escala = function (x) {
+    var q = ee.Image(x).rename('I').updateMask(mascara).reduceRegion({
+              reducer: ee.Reducer.percentile([50, 99]), geometry: AOI, scale: 10, bestEffort: true});
+    var p50 = ee.Number(q.get('I_p50')), p99 = ee.Number(q.get('I_p99'));
+    return ee.Image(x).rename('I').subtract(p50).divide(p99.subtract(p50).max(1e-6));
+  };
+  var cb;
+  if (['TT', 'TA', 'FDR', 'FDT', 'FDRU', 'FSUM'].indexOf(opc.polz) >= 0) {
+    var fV = s1c('VH'), fW = s1c('VV');
+    var D = fV.I.add(fW.I).divide(2);        // cambio de la v11
+    var ev;
+    if (opc.polz === 'TT' || opc.polz === 'TA') ev = pruebaT(opc.polz);
+    else if (opc.polz === 'FSUM') {
+      // consenso: promedio de las tres evidencias de perdida (v11, VH/VV y prueba t)
+      ev = escala(D).add(escala(s1idx('RAT').I)).add(escala(pruebaT('TT'))).divide(3);
+    } else {
+      var z = [escala(D)];
+      if (opc.polz !== 'FDT') z.push(escala(s1idx('RAT').I));
+      if (opc.polz === 'FDT') z.push(escala(pruebaT('TT')));
+      if (opc.polz === 'FDRU') z.push(escala(D.multiply(-1)));
+      ev = ee.ImageCollection(z).max();
+    }
+    cb = {I: ev, nap: fV.nap, naq: fV.naq, ndp: fV.ndp, ndq: fV.ndq, ambos: fV.ambos};
+  } else if (opc.polz === 'VHVV') {              // P41: promedio del cambio en VH y en VV
+    var cVH = s1('VH'), cVV = s1('VV');
+    cb = {I: cVH.I.add(cVV.I).divide(2), nap: cVH.nap, naq: cVH.naq, ndp: cVH.ndp, ndq: cVH.ndq};
+  } else if (opc.polz === 'VHVVc') {      // P31: lo mismo, corregido por pendiente
+    var kVH = s1c('VH'), kVV = s1c('VV');
+    // como se juntan VH y VV (v9, 2026-09-26): 'prom' (v8), 'max' = el mayor de
+    // los dos (P45), 'maxabs' = el de mayor valor absoluto, con su signo
+    var Ic = kVH.I.add(kVV.I).divide(2);
+    if (opc.comb === 'max') Ic = kVH.I.max(kVV.I);
+    if (opc.comb === 'maxabs') Ic = kVH.I.where(kVV.I.abs().gt(kVH.I.abs()), kVV.I);
+    cb = {I: Ic, nap: kVH.nap, naq: kVH.naq, ndp: kVH.ndp, ndq: kVH.ndq, ambos: kVH.ambos};
+  } else if (opc.polz === 'OMN') {        // v13: prueba omnibus pre/post
+    cb = omnibus();
+  } else if (opc.polz === 'RAT' || opc.polz === 'RVI') {   // v12: indice de vegetacion radar
+    cb = s1idx(opc.polz);
+  } else if (opc.polz === 'MIX') {        // v12: promedio del cambio v11 y del cambio de la relacion VH/VV
+    var mVH = s1c('VH'), mVV = s1c('VV'), mR = s1idx('RAT');
+    cb = {I: mVH.I.add(mVV.I).divide(2).add(mR.I).divide(2), nap: mVH.nap, naq: mVH.naq,
+          ndp: mVH.ndp, ndq: mVH.ndq, ambos: mVH.ambos};
+  } else if (opc.polz === 'L') {          // P42: banda L
+    cb = banL();
+  } else {
+    cb = s1(opc.polz);
+  }
+  var I = ee.Image(cb.I).rename('I').updateMask(mascara).clip(AOI);
+  // v9: suavizado gaussiano leve del cambio (radio 15 m, sigma 10 m)
+  if (opc.suave) {
+    I = I.reproject(PROY).reduceNeighborhood({reducer: ee.Reducer.mean(),
+          kernel: ee.Kernel.gaussian({radius: 15, sigma: 10, units: 'meters'})})
+         .rename('I').updateMask(mascara).clip(AOI);
+  }
+  // v9: umbral sobre el valor absoluto del cambio (ya probado en P30 con VH)
+  if (opc.absI) I = I.abs();
+
+  // ---- regla v1: tamano
+  var P = I.reduceRegion({reducer: ee.Reducer.percentile([80, 90, 95, PCT]),   // v16: + p95 para dibujar
+            geometry: AOI, scale: 10, bestEffort: true});
+  var uA = ee.Number(P.get('I_p' + PCT));
+  // v9: p98 cuando solo hay un paso (asc o desc) en las ventanas
+  if (opc.p98solo) {
+    var p98 = ee.Number(I.reduceRegion({reducer: ee.Reducer.percentile([98]),
+            geometry: AOI, scale: 10, bestEffort: true}).values().get(0));
+    uA = ee.Number(ee.Algorithms.If(cb.ambos, uA, p98));
+  }
+  var zA = I.gt(uA).selfMask();
+  // v11: persistencia. El cambio debe seguir en la segunda mitad de la ventana
+  // post (al menos la mitad del umbral): la cicatriz se queda, el cultivo no.
+  if (opc.persist && opc.polz === 'VHVVc') {
+    var vQ2 = ee.Filter.date(fPos.advance(vpost / 2, 'day'), fPos.advance(vpost, 'day'));
+    var q2VH = s1c('VH', vQ2), q2VV = s1c('VV', vQ2);
+    var hay2 = q2VH.naq.add(q2VH.ndq).gt(0);
+    var I2 = ee.Image(ee.Algorithms.If(hay2, q2VH.I.add(q2VV.I).divide(2), ee.Image.constant(999)))
+               .rename('I').updateMask(mascara).clip(AOI);
+    zA = I.gt(uA).and(I2.gt(uA.multiply(0.5))).selfMask();
+  }
+
+  // ---- reglas v2 y v3: contraste local
+  var Ir = I.reproject(PROY);
+  var sIn = Ir.reduceNeighborhood({reducer: sumCount, kernel: kIn});
+  var sOut = Ir.reduceNeighborhood({reducer: sumCount, kernel: kOut});
+  var mIn = sIn.select('I_sum').divide(sIn.select('I_count'));
+  var mRing = sOut.select('I_sum').subtract(sIn.select('I_sum'))
+               .divide(sOut.select('I_count').subtract(sIn.select('I_count')));
+  var C = mIn.subtract(mRing).rename('C').updateMask(Ir.mask()).clip(AOI);
+  var uK = ee.Number(C.reduceRegion({reducer: ee.Reducer.percentile([PCT]),
+             geometry: AOI, scale: 10, bestEffort: true}).values().get(0));
+  var zK = C.gt(uK).selfMask();
+
+  // manchas: area, contraste medio y si tocan el poligono
+  var manchas = function (z, banda, crs) {
+    return z.rename('z').addBands(banda).reduceToVectors({
+      geometry: AOI, crs: crs, scale: 10, geometryType: 'polygon',
+      eightConnected: true, labelProperty: 'z', reducer: ee.Reducer.mean(),
+      maxPixels: 1e9, bestEffort: true}).map(function (g) {
+        return g.set('a', g.geometry().area(1))
+                .set('s', ee.Number(g.get('mean')).multiply(g.geometry().area(1)))
+                .set('toca', ee.Number(ee.Algorithms.If(
+                   g.geometry().intersects(pol, ee.ErrorMargin(1)), 1, 0)));
+      });
+  };
+  // puesto de la mejor mancha que toca, ordenando por la propiedad dada
+  var puesto = function (col, prop) {
+    var toc = col.filter(ee.Filter.eq('toca', 1));
+    var mejor = ee.Number(ee.Algorithms.If(toc.size().gt(0), toc.aggregate_max(prop), 0));
+    return ee.Number(ee.Algorithms.If(toc.size().gt(0),
+             col.filter(ee.Filter.gt(prop, mejor)).size().add(1), -1));
+  };
+  var mA = manchas(zA, I, I.projection()), mK = manchas(zK, C, PROY);
+
+  // ---- v14 (2026-09-27): DETECCION POR OBJETOS, al estilo de Esposito et al.
+  // (2020, NHESS 20:2379). Primero se divide la caja en segmentos parecidos (SNIC
+  // sobre el cambio I); cada segmento toma el cambio medio de sus pixeles y se
+  // decide por segmentos, no por pixeles sueltos. Asi el speckle se promedia y el
+  // orden deja de premiar solo el tamano. Dos formas y dos tamanos de semilla:
+  //   'v14' (50 m) y 'v14p' (30 m): se entregan los 4 segmentos de mayor cambio medio.
+  //   'v14e' (50 m) y 'v14q' (30 m): filtro estadistico. Se marcan los segmentos con
+  //     cambio medio > media + 2 desviaciones de la caja, se unen los vecinos y se
+  //     entregan los 4 objetos mas grandes (igual que la v1).
+  var AMIN_SEG = 500;   // m2: se ignoran segmentos de menos de 5 pixeles (bordes y speckle)
+  var objetos = function (semilla) {
+    var sn = ee.Algorithms.Image.Segmentation.SNIC({image: Ir, size: semilla, compactness: 1,
+               connectivity: 8, seeds: ee.Algorithms.Image.Segmentation.seedGrid(semilla)});
+    var Iseg = sn.select('I_mean').rename('I').reproject(PROY);
+    var segs = manchas(sn.select('clusters').reproject(PROY), Ir, PROY)
+                 .filter(ee.Filter.gte('a', AMIN_SEG));
+    var top = segs.sort('mean', false).limit(TOP_N);
+    var corte = ee.Number(ee.Algorithms.If(top.size().gt(0), top.aggregate_min('mean'), 999));
+    var st = Iseg.reduceRegion({reducer: ee.Reducer.mean().combine(ee.Reducer.stdDev(), '', true),
+               geometry: AOI, scale: 10, bestEffort: true});
+    var uS = ee.Number(st.get('I_mean')).add(ee.Number(st.get('I_stdDev')).multiply(2));
+    var zS = Iseg.gt(uS).selfMask();
+    var mS = manchas(zS, Ir, PROY);
+    return {
+      seg: {z: Iseg.gte(corte).selfMask(), m: segs, prop: 'mean', u: corte, top: top, S: Iseg},
+      est: {z: zS, m: mS, prop: 'a', u: uS, top: mS.sort('a', false).limit(TOP_N), S: Iseg}
+    };
+  };
+  var o5 = objetos(5), o3 = objetos(3);
+
+  // cada regla: zonas marcadas, manchas, propiedad para ordenar, umbral
+  var reglas = {
+    v1: {z: zA, m: mA, prop: 'a', u: uA, top: mA.sort('a', false).limit(TOP_N)},
+    v2: {z: zK, m: mK, prop: 'mean', u: uK, top: mK.sort('mean', false).limit(TOP_N)},
+    v3: {z: zK, m: mK, prop: 's', u: uK, top: mK.sort('s', false).limit(TOP_N)},
+    v14: o5.seg, v14p: o3.seg, v14e: o5.est, v14q: o3.est
+  };
+
+  // v12 (P51): fraccion del poligono que cubren las manchas entregadas
+  var cobertura = function (top) {
+    return ee.Number(top.geometry(1).intersection(pol, 1).area(1)).divide(pol.area(1));
+  };
+
+  // ---- diagnostico
+  // rk: fraccion de la caja con cambio >= al pixel mas alto del poligono.
+  //     Si rk <= 0,01 el poligono pasa el umbral p99 (tiene mancha encima).
+  var mx = I.reduceRegion({reducer: ee.Reducer.max(), geometry: pol, scale: 10, bestEffort: true}).get('I');
+  var rk = ee.Number(ee.Algorithms.If(mx,
+             I.gte(ee.Number(mx)).reduceRegion({reducer: ee.Reducer.mean(), geometry: AOI,
+               scale: 10, bestEffort: true}).get('I'), -1));
+  // lluvia CHIRPS acumulada en cada ventana, media en 3 km alrededor del evento
+  var zona = pol.centroid(1).buffer(3000);
+  var lluv = function (a, b) {
+    return ee.Number(chirps.filterDate(a, b).sum().reduceRegion({
+      reducer: ee.Reducer.mean(), geometry: zona, scale: 5566}).values().get(0));
+  };
+  // imagenes ALOS-2 PALSAR-2 (banda L) disponibles en las mismas ventanas
+  var nL = function (a, b) {
+    return palsar.filterBounds(pol).filterDate(a, b).filter(ee.Filter.listContains('Polarizations', 'HV')).size();
+  };
+  // imagenes Sentinel-2 con menos de 10 % de nubes (el filtro del codigo original)
+  var nS2 = function (a, b) {
+    return s2col.filterBounds(pol).filterDate(a, b).filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10)).size();
+  };
+
+  // ---- medidas para saber POR QUE no se detecta (2026-09-26)
+  var anillo = pol.buffer(150, 1).difference(pol.buffer(30, 1), 1);
+  // contraste: cambio medio dentro del poligono menos mediana del anillo 30-150 m
+  var contraste = function (img, banda) {
+    var den = img.reduceRegion({reducer: ee.Reducer.mean(), geometry: pol, scale: 10, bestEffort: true}).get(banda);
+    var fue = img.reduceRegion({reducer: ee.Reducer.median(), geometry: anillo, scale: 10, bestEffort: true}).get(banda);
+    return ee.Number(ee.Algorithms.If(den, ee.Algorithms.If(fue,
+             ee.Number(den).subtract(ee.Number(fue)), -99), -99));
+  };
+  // fraccion del poligono en layover o sombra, por sentido de paso
+  var thetaDe = function (paso) {
+    var c = s1base.filterBounds(pol).filter(ee.Filter.eq('orbitProperties_pass', paso)).filter(vQ);
+    var v = c.select('angle').median().reduceRegion({reducer: ee.Reducer.mean(), geometry: pol, scale: 100}).get('angle');
+    return ee.Number(ee.Algorithms.If(c.size().gt(0), ee.Algorithms.If(v, v, 39), 39));
+  };
+  var fracMala = function (paso) {
+    return ee.Number(malaGeom(vista[paso], thetaDe(paso)).reduceRegion({reducer: ee.Reducer.mean(),
+             geometry: pol, scale: 10, bestEffort: true}).values().get(0));
+  };
+  // cambio de NDVI (Sentinel-2 con Cloud Score+) en las MISMAS ventanas: si el
+  // deslizamiento quito vegetacion en esas fechas, el NDVI del poligono baja
+  // mas que el del anillo. dNDVI = contraste de (NDVI pre - NDVI post).
+  // imagen vacia (enmascarada) para que la mediana tenga la banda N aunque no haya imagenes
+  var vacioN = ee.ImageCollection([ee.Image.constant(0).rename('N').toFloat().updateMask(0)]);
+  var ndvi = function (a, b) {
+    return s2col.filterBounds(AOI).filterDate(a, b).linkCollection(csPlus, ['cs_cdf']).map(function (im) {
+      return im.normalizedDifference(['B8', 'B4']).rename('N').toFloat().updateMask(im.select('cs_cdf').gte(0.6));
+    }).merge(vacioN).median();
+  };
+  var dN = ndvi(vp.ini, vp.fin).subtract(ndvi(fPos, fPos.advance(vpost, 'day'))).rename('N');
+  // v10: lo mismo con el filtro del codigo original (imagen entera con < 10 %
+  // de nubes y mascara QA60), para comparar el efecto del filtro de nubes
+  var ndvi10 = function (a, b) {
+    return s2col.filterBounds(AOI).filterDate(a, b).filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+      .map(function (im) {
+        var qa = im.select('QA60');
+        return im.normalizedDifference(['B8', 'B4']).rename('N').toFloat()
+                 .updateMask(qa.bitwiseAnd(1 << 10).eq(0).and(qa.bitwiseAnd(1 << 11).eq(0)));
+      }).merge(vacioN).median();
+  };
+  var dN10 = ndvi10(vp.ini, vp.fin).subtract(ndvi10(fPos, fPos.advance(vpost, 'day'))).rename('N');
+  // v10: imagenes S2 en que el poligono se ve despejado (>= 50 % de sus pixeles
+  // con cs_cdf >= 0,6), sin importar las nubes del resto de la imagen
+  var nDesp = function (a, b) {
+    return s2col.filterBounds(pol).filterDate(a, b).linkCollection(csPlus, ['cs_cdf']).map(function (im) {
+      return im.set('cl', im.select('cs_cdf').gte(0.6).reduceRegion({reducer: ee.Reducer.mean(),
+               geometry: pol, scale: 10, bestEffort: true}).get('cs_cdf'));
+    }).filter(ee.Filter.gte('cl', 0.5)).size();
+  };
+
+  return {AOI: AOI, I: I, C: C, P: P, elevation: elevation, slope: slope, reglas: reglas,
+          Ib: ee.Image(cb.I).rename('I').clip(AOI), agua: nasadem.select('swb').eq(0),   // v16: cambio sin mascara de pendiente
+          // v19: angulo de incidencia local (grados) por sentido de paso, para el censo de manchas
+          lia: function (paso) { return ee.Image.constant(thetaDe(paso)).subtract(alfaR(vista[paso]).multiply(180 / Math.PI)); },
+          diag: {contraste: contraste, fracMala: fracMala, dN: dN, dN10: dN10,
+                 nDespPre: nDesp(vp.ini, vp.fin), nDespPos: nDesp(fPos, fPos.advance(vpost, 'day')),
+                 dias: fPos.difference(fPre, 'day'), ha: pol.area(1).divide(1e4)},
+          puesto: puesto, vp: vp, manchas: manchas, cobertura: cobertura,
+          // objeto JS (no ee.Dictionary) para que Earth Engine calcule solo lo que se pide
+          datos: {
+            nap: cb.nap, naq: cb.naq, ndp: cb.ndp, ndq: cb.ndq,
+            Iden: I.reduceRegion({reducer: ee.Reducer.mean(), geometry: pol, scale: 10, bestEffort: true}).get('I'),
+            Iaoi: I.reduceRegion({reducer: ee.Reducer.mean(), geometry: AOI, scale: 10, bestEffort: true}).get('I'),
+            rk: rk, llPre: lluv(vp.ini, vp.fin), llPos: lluv(fPos, fPos.advance(vpost, 'day')),
+            nLpre: nL(vp.ini, vp.fin), nLpos: nL(fPos, fPos.advance(vpost, 'day')),
+            nS2pre: nS2(vp.ini, vp.fin), nS2pos: nS2(fPos, fPos.advance(vpost, 'day')),
+            iniPre: vp.ini.format('YYYY-MM-dd'), finPre: vp.fin.format('YYYY-MM-dd'),
+            finPos: fPos.advance(vpost, 'day').format('YYYY-MM-dd')
+          }};
+}
+
+var f = function (x, fm) { return ee.Number(x).format(fm); };
+
+// v15: DOS CARRILES. a = modelo de la v11, b = modelo de la fusion (FDRU20). Se
+// entregan las 4 manchas de cada uno; detecta si una de las 4 de cualquiera de los
+// dos toca el poligono. pu = el mejor puesto entre los dos carriles.
+// v16 (2026-09-27): DIBUJO DEL DESLIZAMIENTO sin cambiar la deteccion. Las manchas
+// entregadas son semillas; se les agregan los pixeles vecinos que cambiaron un poco
+// menos (percentil pct de la caja en vez del 99), solo si quedan pegados a la mancha
+// (crecimiento de a un pixel, hasta 15 pixeles = 150 m; umbral con histeresis como en
+// Canny 1986) y con pendiente >= pend (10 deja entrar el deposito). Al final, cierre
+// morfologico de 1 pixel para rellenar huecos y suavizar el borde.
+// v = null: sin crecer (el dibujo de la v15).
+var DIB16 = {pct: 95, pend: 10, suave: true};   // variante elegida (ver resultados v16 en el encabezado)
+function dibujar(r, top, v) {
+  var k1 = {radius: 1, kernelType: 'square', units: 'pixels'};
+  var sem = ee.Image(0).byte().paint(top, 1).reproject(PROY).clip(r.AOI);
+  if (!v) return sem.rename('d').selfMask();
+  // suave: promedio 3 x 3 del cambio antes de crecer (menos huecos por speckle)
+  var base = r.Ib, ref = r.I;
+  var km = {radius: 15, kernelType: 'square', units: 'meters'};
+  if (v.suave) { base = base.focalMean(km); ref = ref.focalMean(km); }
+  var u = v.suave ? ee.Number(ref.reduceRegion({reducer: ee.Reducer.percentile([v.pct]), geometry: r.AOI,
+                      scale: 10, bestEffort: true}).values().get(0))
+                  : ee.Number(r.P.get('I_p' + v.pct));
+  var cand = base.gt(u).and(r.agua).and(r.slope.gte(v.pend)).unmask(0).reproject(PROY);
+  var perm = cand.or(sem);
+  var g = sem;
+  for (var k = 0; k < (v.pasos || 15); k++) g = g.focalMax(k1).and(perm).reproject(PROY);
+  g = g.focalMax(k1).focalMin(k1).reproject(PROY);
+  return g.rename('d').selfMask();
+}
+// dibujo de la v15: cada carril crece sobre su propio mapa de cambio
+function dibujoV15(a, b, v, soloToca) {
+  var tA = a.reglas.v1.top, tB = b.reglas.v1.top;
+  if (soloToca) { tA = tA.filter(ee.Filter.eq('toca', 1)); tB = tB.filter(ee.Filter.eq('toca', 1)); }
+  return dibujar(a, tA, v).unmask(0).or(dibujar(b, tB, v).unmask(0)).selfMask();
+}
+// que tan bien dibuja: cob = parte del poligono cubierta; prec = parte de lo dibujado
+// que cae dentro; iou = interseccion / union
+function medirDibujo(g, pol, AOI) {
+  var pim = ee.Image(0).byte().paint(ee.FeatureCollection([ee.Feature(pol)]), 1).reproject(PROY);
+  var gm = g.unmask(0), px = ee.Image.pixelArea();
+  var s = px.updateMask(gm).rename('g').addBands(px.updateMask(gm.and(pim)).rename('i'))
+            .addBands(px.updateMask(pim).rename('p'))
+            .reduceRegion({reducer: ee.Reducer.sum(), geometry: AOI, crs: 'EPSG:32618', scale: 10, maxPixels: 1e9});
+  var G = ee.Number(s.get('g')), In = ee.Number(s.get('i')), Pa = ee.Number(s.get('p'));
+  return {cob: In.divide(Pa.max(1)), prec: In.divide(G.max(1)), iou: In.divide(G.add(Pa).subtract(In).max(1)),
+          ha: G.divide(1e4)};
+}
+
+function carrilDoble(a, b) {
+  var A = a.reglas.v1, B = b.reglas.v1;
+  var pA = ee.Number(a.puesto(A.m, 'a')), pB = ee.Number(b.puesto(B.m, 'a'));
+  var pu = ee.Number(ee.Algorithms.If(pA.gt(0).and(pB.gt(0)), pA.min(pB),
+             ee.Algorithms.If(pA.gt(0), pA, pB)));
+  return {z: A.z.unmask(0).or(B.z.unmask(0)).selfMask(), m: A.m.merge(B.m), prop: 'a', u: A.u,
+          top: A.top.merge(B.top), pu: pu};
+}
+
+// lee un evento del inventario (fuente '63') o un control del archivo de 70
+function leer(fuente, idx) {
+  if (fuente === '63') {
+    var F = ee.Feature(inv.filter(ee.Filter.eq('ID', idx)).first());
+    return {F: F, fPre: ee.Date(ee.String(F.get('FECHA_PRE'))),
+            fPos: ee.Date(ee.String(F.get('FECHA_POS')))};
+  }
+  var G = ee.Feature((fuente === '30' ? lista30 : lista70).get(idx));
+  return {F: G, fPre: ee.Date(ee.Number(G.get('Pre_evento'))),
+          fPos: ee.Date(ee.Number(G.get('Post_event')))};
+}
+
+// ============================================================================
+//  MODO LOTE: una linea por escena, todas las versiones a la vez
+// ============================================================================
+if (MODO === 'LOTE' && ['ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18', 'SERIE', 'FECHAS', 'MANCHAS'].indexOf(GRUPO) < 0) {
+  var lista = FUENTE === '63'
+    ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
+    : ee.List.sequence(2, 26);
+  var lineas = lista.map(function (i) {
+    var e = leer(FUENTE, i);
+    var pol = e.F.geometry();
+    var base = {ventana: 'NORMAL', polz: 'VHVVc'};
+    var op = function (extra) {
+      var o = {ventana: 'NORMAL', polz: 'VHVVc'};
+      for (var k in extra) o[k] = extra[k];
+      return modelo(pol, e.fPre, e.fPos, o);
+    };
+    var c = modelo(pol, e.fPre, e.fPos, base);                 // v8
+    var pu = function (r) { return f(r.puesto(r.reglas.v1.m, 'a'), '%d'); };
+    var rkf = function (r) { return f(r.datos.rk, '%.3f'); };
+    var txt = ee.String(FUENTE === '63' ? 'ID' : 'C').cat(f(i, '%d')).cat(' v8=').cat(pu(c));
+    if (GRUPO === 'A') {
+      // v11: pendiente minima 15 y 20 grados; caja de 500 m y de 2 km
+      var q15 = op({pendMin: 15}), q20 = op({pendMin: 20});
+      var c05 = op({lado: 500}), c20 = op({lado: 2000});
+      txt = txt.cat(' pend15=').cat(pu(q15)).cat(' pend20=').cat(pu(q20))
+        .cat(' caja500=').cat(pu(c05)).cat(' caja2k=').cat(pu(c20))
+        .cat(' rk8=').cat(rkf(c)).cat(' rkP15=').cat(rkf(q15)).cat(' rkP20=').cat(rkf(q20))
+        .cat(' rkC05=').cat(rkf(c05)).cat(' rkC20=').cat(rkf(c20));
+    } else if (GRUPO === 'C') {
+      // v11: pendiente minima 20 grados junto con ventanas de 365 dias
+      var pv = op({pendMin: 20, vpre: 365, vpost: 365});
+      txt = txt.cat(' p20w365=').cat(pu(pv)).cat(' rk8=').cat(rkf(c)).cat(' rkPW=').cat(rkf(pv));
+    } else {
+      // v11: filtro de Lee por imagen; persistencia del cambio
+      var le = op({lee: true}), pe = op({persist: true});
+      txt = txt.cat(' lee=').cat(pu(le)).cat(' persist=').cat(pu(pe))
+        .cat(' rk8=').cat(rkf(c)).cat(' rkLee=').cat(rkf(le));
+    }
+    return txt;
+  });
+  print('v11 sobre la v8, grupo ' + GRUPO + '. Puesto de la mejor mancha que toca (-1 = ninguna); detecta si esta entre 1 y ' + TOP_N + '. '
+      + 'pendN = mascara de pendiente minima N grados; cajaN = caja de N m; lee = filtro de Lee por imagen; '
+      + 'persist = el cambio debe seguir en la segunda mitad de la ventana post. rk = como siempre.');
+  print(ee.List(lineas).join(' | '));
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'ROC' (2026-09-26): v1 (original) y v11 (la mejor) por
+//  escena, para la curva ROC por evento (con rk) y el kappa (con el puesto),
+//  y el AUC por pixel como Handwerger et al. (2022): cambio dentro del
+//  poligono contra el resto de la caja, en cada evento.
+// ============================================================================
+if (MODO === 'LOTE' && GRUPO === 'ROC') {
+  var listaR = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
+             : FUENTE === '70R' ? ee.List([0, 1]).cat(ee.List.sequence(27, 69))
+             : ee.List.sequence(2, 26);
+  var NB = 300;
+  var histo = function (img, geom) {
+    var h = img.reduceRegion({reducer: ee.Reducer.fixedHistogram(-15, 15, NB), geometry: geom,
+              scale: 10, bestEffort: true, maxPixels: 1e9}).get('I');
+    return ee.Array(ee.Algorithms.If(h, ee.Array(h).slice(1, 1, 2).project([0]), ee.Array(ee.List.repeat(0, NB))));
+  };
+  // AUC por pixel: probabilidad de que un pixel del poligono tenga mas cambio
+  // que uno del resto de la caja (empates cuentan la mitad)
+  var aucPx = function (hin, hout) {
+    var cum = hout.accum(0);
+    var bajo = cum.subtract(hout).add(hout.multiply(0.5));
+    var nin = hin.reduce(ee.Reducer.sum(), [0]).get([0]);
+    var nout = hout.reduce(ee.Reducer.sum(), [0]).get([0]);
+    var num = hin.multiply(bajo).reduce(ee.Reducer.sum(), [0]).get([0]);
+    return ee.Number(ee.Algorithms.If(ee.Number(nin).multiply(nout).gt(0),
+             ee.Number(num).divide(ee.Number(nin).multiply(nout)), -1));
+  };
+  var filas = listaR.map(function (i) {
+    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var pol = e.F.geometry();
+    var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VH'});        // v1
+    var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});   // v11
+    var fuera = a.AOI.difference(pol, 1);
+    var ha = pol.area(1).divide(1e4);
+    var t = ee.String(f(i, '%d')).cat(',').cat(f(a.puesto(a.reglas.v1.m, 'a'), '%d'))
+      .cat(',').cat(f(b.puesto(b.reglas.v1.m, 'a'), '%d'))
+      .cat(',').cat(f(a.datos.rk, '%.4f')).cat(',').cat(f(b.datos.rk, '%.4f'))
+      .cat(',').cat(f(ha, '%.3f'));
+    if (FUENTE !== 'CTRL') {
+      t = t.cat(',').cat(f(aucPx(histo(a.I, pol), histo(a.I, fuera)), '%.3f'))
+           .cat(',').cat(f(aucPx(histo(b.I, pol), histo(b.I, fuera)), '%.3f'));
+    }
+    return t;
+  });
+  print('ROC ' + FUENTE + ': indice, puesto v1, puesto v11, rk v1, rk v11, ha'
+      + (FUENTE !== 'CTRL' ? ', AUC por pixel v1, AUC por pixel v11' : '') + '. Separador: punto y coma.');
+  print(ee.List(filas).join(';'));
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'V12' (2026-09-27): P51 y P53 sobre los 63 o los 25.
+//  Para la v11 y tres indices de vegetacion radar: puesto, rk y fraccion del
+//  poligono cubierta por las 4 manchas entregadas (criterio de solape).
+// ============================================================================
+if (MODO === 'LOTE' && (GRUPO === 'V12' || GRUPO === 'V13' || GRUPO === 'V15')) {
+  var listaV = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
+             : ee.List.sequence(2, 26);
+  var filasV = listaV.map(function (i) {
+    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var pol = e.F.geometry();
+    var t = ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'));
+    (GRUPO === 'V13' ? ['VHVVc20', 'OMN20'] : GRUPO === 'V15' ? ['VHVVc20'].concat(V15)
+      : ['VHVVc20', 'RAT20', 'RVI20', 'MIX20']).forEach(function (pz) {
+      var r = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: pz});
+      t = t.cat(',').cat(f(r.puesto(r.reglas.v1.m, 'a'), '%d'))
+           .cat(',').cat(f(r.datos.rk, '%.4f'))
+           .cat(',').cat(f(r.cobertura(r.reglas.v1.top), '%.3f'));
+    });
+    return t;
+  });
+  print(GRUPO + ' ' + FUENTE + ': indice, ha; y para ' + (GRUPO === 'V13' ? 'v11 y OMN' : GRUPO === 'V15' ? 'v11 y ' + V15.join(', ')
+      : 'v11, RAT, RVI, MIX') + ': puesto, rk, cobertura. Separador: punto y coma.');
+  print(ee.List(filasV).join(';'));
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'SERIE' (2026-09-27): cuando cambio el sitio. Por mes, de 2019 a
+//  2025: NDVI del poligono y del anillo (Sentinel-2, Cloud Score+) y VH del poligono
+//  menos el anillo (Sentinel-1, dB). Solo para revisar fechas; no entra en el modelo.
+// ============================================================================
+var IDS_SERIE = [35];
+if (MODO === 'LOTE' && GRUPO === 'SERIE') {
+  IDS_SERIE.forEach(function (id) {
+    var e = leer('63', id), pol = e.F.geometry();
+    var ani = pol.buffer(150, 1).difference(pol.buffer(30, 1), 1);
+    var s2 = s2col.filterBounds(pol).linkCollection(csPlus, ['cs_cdf']).map(function (im) {
+      return im.normalizedDifference(['B8', 'B4']).rename('N').updateMask(im.select('cs_cdf').gte(0.6))
+               .copyProperties(im, ['system:time_start']);
+    });
+    var vh = s1base.filterBounds(pol).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH')).select('VH');
+    var meses = ee.List.sequence(0, 83).map(function (k) {
+      var a = ee.Date('2019-01-01').advance(k, 'month'), b = a.advance(1, 'month');
+      var n = s2.filterDate(a, b), v = vh.filterDate(a, b);
+      var med = function (col, g, band, red) {
+        return ee.Algorithms.If(col.size().gt(0), col.median().reduceRegion({reducer: red, geometry: g,
+                 scale: 10, bestEffort: true}).get(band), -99);
+      };
+      var np = med(n, pol, 'N', ee.Reducer.mean()), na = med(n, ani, 'N', ee.Reducer.median());
+      var vp = med(v, pol, 'VH', ee.Reducer.mean()), va = med(v, ani, 'VH', ee.Reducer.median());
+      var fm = function (x) { return ee.Number(ee.Algorithms.If(x, x, -99)).format('%.2f'); };
+      return a.format('YYYY-MM').cat(' ').cat(fm(np)).cat(' ').cat(fm(na)).cat(' ')
+              .cat(fm(vp)).cat(' ').cat(fm(va));
+    });
+    print('SERIE ID ' + id + ' (fecha pre/post del inventario abajo): mes, NDVI poligono, NDVI anillo, VH poligono, VH anillo');
+    print(e.fPre.format('YYYY-MM-dd').cat(' / ').cat(e.fPos.format('YYYY-MM-dd')));
+    print(meses.join(';'));
+  });
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'MANCHAS' (2026-09-27): censo de las 8 manchas entregadas por la v15
+//  en cada sitio, para saber POR QUE marca donde no hay deslizamiento. Por mancha:
+//  carril, toca, area, cambio medio, pendiente, angulo de incidencia local asc y desc,
+//  cambio de NDVI (optico, solo diagnostico), VH antes (dB) y fraccion de cobertura de
+//  Dynamic World en la ventana post (arboles, pasto, cultivo, arbustos, suelo desnudo).
+// ============================================================================
+var DW = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1');
+if (MODO === 'LOTE' && GRUPO === 'MANCHAS') {
+  var listaM = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
+             : ee.List.sequence(2, 26).slice(DESDE, HASTA);
+  var filasM = listaM.map(function (i) {
+    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var pol = e.F.geometry();
+    var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
+    var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
+    var dwl = DW.filterBounds(a.AOI).filterDate(e.fPos, e.fPos.advance(180, 'day')).select('label').mode();
+    var vhp = s1base.filterBounds(a.AOI).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+                .filterDate(a.vp.ini, a.vp.fin).select('VH').median();
+    var pila = a.slope.rename('pend')
+      .addBands(a.lia('ASCENDING').rename('liaA')).addBands(a.lia('DESCENDING').rename('liaD'))
+      .addBands(a.diag.dN.rename('dN')).addBands(vhp.rename('vh'))
+      .addBands(dwl.eq(1).rename('fArb')).addBands(dwl.eq(2).rename('fPas')).addBands(dwl.eq(4).rename('fCul'))
+      .addBands(dwl.eq(5).rename('fArbu')).addBands(dwl.eq(7).rename('fSue'));
+    var tops = a.reglas.v1.top.map(function (g) { return g.set('carril', 1); })
+      .merge(b.reglas.v1.top.map(function (g) { return g.set('carril', 2); }));
+    var st = pila.reduceRegions({collection: tops, reducer: ee.Reducer.mean(), scale: 10});
+    var fm = function (g, k, fmt) { return ee.Number(ee.Algorithms.If(g.get(k), g.get(k), -99)).format(fmt); };
+    var txt = st.toList(20).map(function (g) {
+      g = ee.Feature(g);
+      return ee.String(f(i, '%d')).cat(',').cat(fm(g, 'carril', '%d')).cat(',').cat(fm(g, 'toca', '%d'))
+        .cat(',').cat(ee.Number(g.get('a')).divide(1e4).format('%.3f')).cat(',').cat(fm(g, 'mean', '%.2f'))
+        .cat(',').cat(fm(g, 'pend', '%.1f')).cat(',').cat(fm(g, 'liaA', '%.1f')).cat(',').cat(fm(g, 'liaD', '%.1f'))
+        .cat(',').cat(fm(g, 'dN', '%.3f')).cat(',').cat(fm(g, 'vh', '%.1f'))
+        .cat(',').cat(fm(g, 'fArb', '%.2f')).cat(',').cat(fm(g, 'fPas', '%.2f')).cat(',').cat(fm(g, 'fCul', '%.2f'))
+        .cat(',').cat(fm(g, 'fArbu', '%.2f')).cat(',').cat(fm(g, 'fSue', '%.2f'))
+        .cat(',').cat(f(a.datos.llPre, '%.0f')).cat(',').cat(f(a.datos.llPos, '%.0f'))
+        .cat(',').cat(f(a.datos.nap, '%d')).cat(',').cat(f(a.datos.ndp, '%d'));
+    });
+    return ee.List(txt).join(';');
+  });
+  print('MANCHAS ' + FUENTE + ': sitio, carril, toca, ha, cambio, pendiente, lia asc, lia desc, dNDVI, VH pre, '
+      + 'f arboles, f pasto, f cultivo, f arbustos, f suelo, lluvia pre, lluvia post, n asc pre, n desc pre. Separador: punto y coma.');
+  print(ee.List(filasM).join(';'));
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'FECHAS' (2026-09-27): revisar si el deslizamiento ya estaba antes
+//  de la ventana pre. Contraste de NDVI (anillo menos poligono; Sentinel-2 con Cloud
+//  Score+) en tres ventanas: un ano antes de la pre, la ventana pre y la post. Solo
+//  diagnostico optico para revisar fechas del inventario; no entra en el detector.
+// ============================================================================
+if (MODO === 'LOTE' && GRUPO === 'FECHAS') {
+  var listaF = ee.List(inv.sort('ID').aggregate_array('ID'));
+  var filasF = listaF.map(function (i) {
+    var e = leer('63', i), pol = e.F.geometry();
+    var ani = pol.buffer(150, 1).difference(pol.buffer(30, 1), 1);
+    var s2 = s2col.filterBounds(pol).filterDate(e.fPre.advance(-540, 'day'), e.fPos.advance(180, 'day'))
+      .linkCollection(csPlus, ['cs_cdf']).map(function (im) {
+      return im.normalizedDifference(['B8', 'B4']).rename('N').toFloat().updateMask(im.select('cs_cdf').gte(0.6))
+               .copyProperties(im, ['system:time_start']);
+    });
+    var vacio = ee.ImageCollection([ee.Image.constant(0).rename('N').toFloat().updateMask(0)]);
+    var con = function (a, b) {
+      var m = s2.filterDate(a, b).merge(vacio).median();
+      var dp = m.reduceRegion({reducer: ee.Reducer.mean(), geometry: pol, scale: 10, bestEffort: true}).get('N');
+      var da = m.reduceRegion({reducer: ee.Reducer.median(), geometry: ani, scale: 10, bestEffort: true}).get('N');
+      return ee.Number(ee.Algorithms.If(dp, ee.Algorithms.If(da, ee.Number(da).subtract(ee.Number(dp)), -99), -99));
+    };
+    return ee.String(f(i, '%d')).cat(',').cat(f(con(e.fPre.advance(-540, 'day'), e.fPre.advance(-180, 'day')), '%.3f'))
+      .cat(',').cat(f(con(e.fPre.advance(-180, 'day'), e.fPre), '%.3f'))
+      .cat(',').cat(f(con(e.fPos, e.fPos.advance(180, 'day')), '%.3f'))
+      .cat(',').cat(e.fPre.format('YYYY-MM-dd')).cat(',').cat(e.fPos.format('YYYY-MM-dd'));
+  });
+  print('FECHAS 63: ID, contraste NDVI un ano antes, en la ventana pre, en la post, fecha pre, fecha post. Separador: punto y coma.');
+  print(ee.List(filasF).join(';'));
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'V18' (2026-09-27): geometria del radar. Por escena y variante:
+//  puesto v15 y coincidencia del dibujo (IoU; -1 en controles).
+// ============================================================================
+var V18 = [{}, {pista: true}];
+// ronda 1: [{}, {margen: 10}, {margen: 20}, {orb: true}, {margen: 10, orb: true}]
+if (MODO === 'LOTE' && GRUPO === 'V18') {
+  var listaG = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
+             : ee.List.sequence(2, 26);
+  var filasG = listaG.map(function (i) {
+    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var pol = e.F.geometry();
+    var t = ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'));
+    V18.forEach(function (x) {
+      var o1 = {ventana: 'NORMAL', polz: 'VHVVc20', margen: x.margen, orb: x.orb, pista: x.pista};
+      var o2 = {ventana: 'NORMAL', polz: 'FDRU20', margen: x.margen, orb: x.orb, pista: x.pista};
+      var a = modelo(pol, e.fPre, e.fPos, o1), b = modelo(pol, e.fPre, e.fPos, o2);
+      t = t.cat(',').cat(f(carrilDoble(a, b).pu, '%d'));
+      t = FUENTE === '63' ? t.cat(',').cat(f(medirDibujo(dibujoV15(a, b, DIB16, true), pol, a.AOI).iou, '%.3f'))
+                          : t.cat(',-1');
+    });
+    return t;
+  });
+  print('V18 ' + FUENTE + ': indice, ha; y para ' + JSON.stringify(V18) + ': puesto v15, IoU. Separador: punto y coma.');
+  print(ee.List(filasG).join(';'));
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'V16' (2026-09-27): que tan bien dibuja la v15 el deslizamiento.
+//  Solo con las manchas entregadas que tocan el poligono. Por escena: indice, ha,
+//  puesto v15 y, para cada variante de dibujo: cobertura, precision, IoU.
+// ============================================================================
+var V16 = [null, DIB16];   // v15 sin crecer y la variante elegida
+// ronda 2: [{pct: 95, pend: 10}, {pct: 95, pend: 10, suave: true}, {pct: 90, pend: 10, suave: true},
+//           {pct: 90, pend: 10, pasos: 30}, {pct: 95, pend: 10, pasos: 30}]
+// ronda 1: [null, {pct: 95, pend: 20}, {pct: 90, pend: 20}, {pct: 95, pend: 10}, {pct: 90, pend: 10}]
+if (MODO === 'LOTE' && GRUPO === 'V16') {
+  var listaD = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
+             : FUENTE === '70R' ? ee.List([0, 1]).cat(ee.List.sequence(27, 69)) : ee.List.sequence(2, 26);
+  var filasD = listaD.map(function (i) {
+    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var pol = e.F.geometry();
+    var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
+    var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
+    var t = ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'))
+              .cat(',').cat(f(carrilDoble(a, b).pu, '%d'));
+    V16.forEach(function (v) {
+      var m = medirDibujo(dibujoV15(a, b, v, true), pol, a.AOI);
+      t = t.cat(',').cat(f(m.cob, '%.3f')).cat(',').cat(f(m.prec, '%.3f')).cat(',').cat(f(m.iou, '%.3f'));
+    });
+    return t;
+  });
+  print('V16 ' + FUENTE + ': indice, ha, puesto v15; y para ' + JSON.stringify(V16) + ': '
+      + 'cobertura, precision, IoU. Separador: punto y coma.');
+  print(ee.List(filasD).join(';'));
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'V15C' (2026-09-27): confirmacion de la v15 de dos carriles.
+//  Por escena: puesto en el carril v11, puesto en el carril de la fusion, puesto
+//  de la v15 (el mejor de los dos), rk de cada carril y area.
+// ============================================================================
+if (MODO === 'LOTE' && GRUPO === 'V15C') {
+  var listaC = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
+             : FUENTE === '30' ? ee.List.sequence(0, 29)
+             : FUENTE === '70R' ? ee.List([0, 1]).cat(ee.List.sequence(27, 69)) : ee.List.sequence(2, 26);
+  var filasC = listaC.map(function (i) {
+    var e = leer(FUENTE === '63' ? '63' : (FUENTE === '30' ? '30' : '70'), i);
+    var pol = e.F.geometry();
+    var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
+    var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
+    var d = carrilDoble(a, b);
+    return ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'))
+      .cat(',').cat(f(a.puesto(a.reglas.v1.m, 'a'), '%d')).cat(',').cat(f(b.puesto(b.reglas.v1.m, 'a'), '%d'))
+      .cat(',').cat(f(d.pu, '%d')).cat(',').cat(f(a.datos.rk, '%.4f')).cat(',').cat(f(b.datos.rk, '%.4f'));
+  });
+  print('V15C ' + FUENTE + ': indice, ha, puesto v11, puesto fusion, puesto v15, rk v11, rk fusion. Separador: punto y coma.');
+  print(ee.List(filasC).join(';'));
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'V14' (2026-09-27): deteccion por objetos (Esposito et al.
+//  2020) sobre el cambio de la v11. Para la v11 y las cuatro reglas por objetos:
+//  puesto del mejor objeto que toca, numero de objetos en la caja y cobertura.
+// ============================================================================
+if (MODO === 'LOTE' && GRUPO === 'V14') {
+  var listaW = FUENTE === '63' ? ee.List(inv.sort('ID').aggregate_array('ID')).slice(DESDE, HASTA)
+             : ee.List.sequence(2, 26);
+  var filasW = listaW.map(function (i) {
+    var e = leer(FUENTE === '63' ? '63' : '70', i);
+    var pol = e.F.geometry();
+    var r = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
+    var t = ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'));
+    ['v1', 'v14', 'v14p', 'v14e', 'v14q'].forEach(function (k) {
+      var R = r.reglas[k];
+      t = t.cat(',').cat(f(r.puesto(R.m, R.prop), '%d')).cat(',').cat(f(R.m.size(), '%d'))
+           .cat(',').cat(f(r.cobertura(R.top), '%.3f'));
+    });
+    return t;
+  });
+  print('V14 ' + FUENTE + ': indice, ha; y para v11, v14 (50 m), v14p (30 m), v14e (50 m, filtro), '
+      + 'v14q (30 m, filtro): puesto, n objetos, cobertura. Separador: punto y coma.');
+  print(ee.List(filasW).join(';'));
+}
+
+// ============================================================================
+//  MODO PANEL: elegir un evento y revisarlo en el mapa
+// ============================================================================
+function pintar(r, regla, pol) {
+  Map.layers().reset();
+  var ColorScale = {min: -3, max: 3, palette: ['0013ff', '8178ff', 'ffffff', 'ff7e7e', 'ff0000']};
+  var rgbVis = {min: 0.0, max: 0.18, bands: ['B4', 'B3', 'B2']};
+  var percentileColor = {min: 0, max: 1, palette: ['ffffff', 'ff0000']};
+  function maskS2clouds(image) {
+    var qa = image.select('QA60');
+    return image.updateMask(qa.bitwiseAnd(1 << 10).eq(0).and(qa.bitwiseAnd(1 << 11).eq(0))).divide(10000);
+  }
+  // Sentinel-2: primero el filtro del codigo original (< 10 % de nubes). En el
+  // Coello muchas ventanas no tienen ninguna imagen asi, y la capa quedaba vacia
+  // (no se podia prender). Si pasa eso, se usa Cloud Score+ (pixeles con
+  // cs_cdf >= 0,6) con todas las imagenes de la ventana.
+  var s2 = s2col.filterBounds(r.AOI);
+  var compuesto = function (a, b) {
+    var orig = s2.filterDate(a, b).filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10)).map(maskS2clouds);
+    var resp = s2.filterDate(a, b).linkCollection(csPlus, ['cs_cdf']).map(function (im) {
+      return im.select(['B4', 'B3', 'B2']).divide(10000).updateMask(im.select('cs_cdf').gte(0.6));
+    });
+    var vacio = ee.Image.constant([0, 0, 0]).rename(['B4', 'B3', 'B2']).updateMask(0);
+    return ee.Image(ee.Algorithms.If(orig.size().gt(0), orig.median().select(['B4', 'B3', 'B2']),
+             ee.Algorithms.If(resp.size().gt(0), resp.median(), vacio))).clip(r.AOI);
+  };
+  var S2pre = compuesto(r.vp.ini, r.vp.fin);
+  var S2pos = compuesto(r.fPos, r.fPos.advance(VPOST, 'day'));
+  var R = r.reglas[regla];
+  Map.setOptions('TERRAIN');
+  Map.centerObject(r.AOI, 15);
+  Map.addLayer(ee.Terrain.hillshade(r.elevation).clip(r.AOI), null, 'FABDEM Hillshade');
+  var contour = ee.ImageCollection(ee.List.sequence(0, 4000, 100).map(function (line) {
+    var c = r.elevation.convolve(ee.Kernel.gaussian(5, 3)).subtract(ee.Image.constant(line))
+              .zeroCrossing().multiply(ee.Image.constant(line)).toFloat();
+    return c.mask(c);
+  })).mosaic();
+  Map.addLayer(contour, {min: 0, max: 1000, palette: ['000000', '000000']}, 'topo lines', false, 0.5);
+  Map.addLayer(S2pre, rgbVis, 'S2 pre-event', false);
+  Map.addLayer(S2pos, rgbVis, 'S2 post-event', false);
+  Map.addLayer(R.z.clip(r.AOI), {min: 0, max: 1, palette: ['ffffff', 'FF0000']}, 'possible landslide zones', true);
+  Map.addLayer(r.I, ColorScale, 'I_ratio masked', false, 0.75);
+  Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p80'))), percentileColor, 'I_ratio >= 80th percentile', false, 0.75);
+  Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p90'))), percentileColor, 'I_ratio >= 90th percentile', false, 0.75);
+  Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p99'))), percentileColor, 'I_ratio >= 99th percentile', false, 0.75);
+  Map.addLayer(r.slope.updateMask(r.slope.gte(PEND_MIN)), {min: 0, max: 60, palette: ['ffffff', '000000']}, 'slope (masked)', false);
+  Map.addLayer(ee.FeatureCollection([ee.Feature(pol)]).style({color: 'ffff00', fillColor: '00000000', width: 2}), {}, 'Coello inventory');
+  Map.addLayer(ee.FeatureCollection([ee.Feature(r.AOI)]).style({color: 'ffffff', fillColor: '00000000', width: 1}), {}, 'AOI');
+  // capas nuevas de la v2
+  Map.addLayer(r.C, ColorScale, 'contraste local (v2)', false, 0.75);
+  Map.addLayer(R.top.style({color: '00ffff', fillColor: '00ffff33', width: 2}), {}, 'top 4 entregadas');
+  if (R.dib) Map.addLayer(R.dib, {palette: ['ff00ff']}, 'deslizamiento dibujado (v16)', true, 0.55);
+}
+
+if (MODO === 'PANEL') {
+  var panel = ui.Panel({style: {width: '360px', padding: '8px'}});
+  ui.root.insert(0, panel);
+  var etiqueta = function (t) {
+    return ui.Label(t, {fontWeight: 'bold', fontSize: '12px', margin: '8px 0 0 0'});
+  };
+  var nota = function (t) { return ui.Label(t, {fontSize: '11px', color: '555555'}); };
+  var selFuente = ui.Select({
+    items: [{label: 'Inventario (63)', value: '63'},
+            {label: 'Controles negativos (25, del archivo de 70)', value: 'CTRL'},
+            {label: 'Prueba ciega (30: 12 controles y 18 deslizamientos)', value: '30'}],
+    value: '63', style: {stretch: 'horizontal'}});
+  var selEvento = ui.Select({placeholder: 'cargando lista...', style: {stretch: 'horizontal'}});
+  var selRegla = ui.Select({
+    items: [{label: 'v1  Handwerger: I > p99, 4 manchas mas grandes', value: 'v1'},
+            {label: 'v2  contraste local, 4 de mayor contraste', value: 'v2'},
+            {label: 'v3  contraste local, 4 de mayor contraste x area', value: 'v3'},
+            {label: 'v15 DOS CARRILES + dibujo v16 (la mejor)', value: 'v15'},
+            {label: 'v14 descartada: objetos de 50 m, 4 de mayor cambio medio', value: 'v14'},
+            {label: 'v14 descartada: objetos de 30 m, 4 de mayor cambio medio', value: 'v14p'},
+            {label: 'v14 descartada: objetos de 50 m con filtro estadistico, 4 mas grandes', value: 'v14e'},
+            {label: 'v14 descartada: objetos de 30 m con filtro estadistico, 4 mas grandes', value: 'v14q'}],
+    value: 'v1', style: {stretch: 'horizontal'}});
+  var selVentana = ui.Select({
+    items: [{label: 'Normal: 180 dias antes de la fecha pre (v1)', value: 'NORMAL'},
+            {label: 'Misma temporada que la post (v4)', value: 'TEMPORADA'}],
+    value: 'NORMAL', style: {stretch: 'horizontal'}});
+  var selPol = ui.Select({
+    items: [{label: 'VH (la del codigo original)', value: 'VH'},
+            {label: 'VV (prueba P33)', value: 'VV'},
+            {label: 'Promedio del cambio en VH y VV (v6)', value: 'VHVV'},
+            {label: 'Promedio VH y VV corregido por pendiente (v8)', value: 'VHVVc'},
+            {label: 'v8 con pendiente minima de 20 grados (v11, la mejor)', value: 'VHVVc20'},
+            {label: 'v12 prueba: relacion VH/VV (vegetacion radar), pendiente 20', value: 'RAT20'},
+            {label: 'v12 prueba: RVI (vegetacion radar), pendiente 20', value: 'RVI20'},
+            {label: 'v12 prueba: v11 + relacion VH/VV, pendiente 20', value: 'MIX20'},
+            {label: 'v13 prueba: prueba estadistica omnibus con todas las imagenes, pendiente 20', value: 'OMN20'},
+            {label: 'v15 prueba: prueba t por pixel (promedio), pendiente 20', value: 'TT20'},
+            {label: 'v15 prueba: prueba t por pixel (mayor |t|, PWTT), pendiente 20', value: 'TA20'},
+            {label: 'v15 prueba: fusion v11 + VH/VV, pendiente 20', value: 'FDR20'},
+            {label: 'v15 prueba: fusion v11 + prueba t, pendiente 20', value: 'FDT20'},
+            {label: 'v15 prueba: fusion v11 + VH/VV + subida de senal, pendiente 20', value: 'FDRU20'},
+            {label: 'v15 prueba: consenso v11 + VH/VV + prueba t, pendiente 20', value: 'FSUM20'},
+            {label: 'Banda L: ALOS-2 HV, pixel de 25 m (P42)', value: 'L'}],
+    value: 'VH', style: {stretch: 'horizontal'}});
+  // v17 (2026-09-27): panel automatico. Usted elige conjunto y evento; el resto es fijo:
+  // la mejor version (v15 dos carriles + dibujo v16). Los selectores de abajo ya no se
+  // muestran; quedan en el codigo solo para comparar versiones viejas si hiciera falta.
+  var AUTO = {regla: 'v15', ventana: 'NORMAL', polz: 'VHVVc20'};
+  var salida = ui.Panel();
+  var resumen = ui.Panel([
+    etiqueta('Resultados medidos (63 eventos, 25 controles)'),
+    nota('v1 base: 21 de 63, 2 falsas alarmas (C2, C25)'),
+    nota('v2 contraste: 23 de 63, 3 falsas alarmas. No se adopta'),
+    nota('v3 contraste x area: 23 de 63, 3 falsas alarmas. No se adopta'),
+    nota('v4 misma temporada: 26 de 63, 3 falsas alarmas. No se adopta: '
+       + 'la separacion sin umbral no mejora'),
+    nota('v5 VV: 23 de 63, 2 falsas alarmas. Sola no mejora'),
+    nota('VH y VV juntas (8 manchas): 26 de 63, 3 falsas alarmas'),
+    nota('v6 promedio VH y VV (4 manchas): 26 de 63, 2 falsas alarmas. '
+       + 'Mejor variante; falta confirmarla en los 30'),
+    nota('v7 banda L ALOS-2: 10 de 63, 4 falsas alarmas. Resolucion muy gruesa'),
+    nota('v8 promedio VH y VV corregido por pendiente: 29 de 63, 1 falsa alarma. '
+       + 'Superada por la v11'),
+    nota('v9 propuestas de otra IA (suavizado, maximo VH/VV, |I|, area x pendiente, '
+       + 'p98): ninguna supera a la v8'),
+    nota('v10 ventanas de 365 dias: 31 de 63, 3 falsas alarmas'),
+    nota('v10 radar + filtro optico (NDVI, Cloud Score+): 32 de 63, 1 falsa alarma. '
+       + 'Descartada: la tesis evalua solo el radar'),
+    nota('v11 v8 con pendiente minima de 20 grados: 30 de 63, 0 falsas alarmas. '
+       + 'MEJOR VERSION; falta confirmarla en los 30'),
+    nota('v11 descartadas: caja de 500 m y de 2 km, filtro de Lee, persistencia'),
+    nota('v12 indices de vegetacion radar (VH/VV, RVI, mezcla): 11 a 22 de 63. Descartados'),
+    nota('v13 prueba omnibus: 29 de 63, 3 falsas alarmas. Rota eventos, no mejora'),
+    nota('v14 objetos (Esposito et al. 2020): 22 a 29 de 63, 2 a 5 falsas alarmas. Descartada'),
+    nota('v15 prueba t y fusiones con 4 manchas: 27 a 30 de 63, 0 a 2 falsas alarmas. Ninguna supera a la v11'),
+    nota('v15 DOS CARRILES (v11 + fusion, 8 manchas): 35 de 63, 0 falsas alarmas. '
+       + 'la v11 sola con 8 manchas da 33 y 4. En los 12 controles de la prueba ciega '
+       + 'no agrega falsas alarmas (4 de 12, las mismas de la v11)'),
+    nota('v16 dibujo: la mancha crece sobre el cambio suavizado (p95, pendiente 10). No cambia la '
+       + 'deteccion. Coincidencia (IoU) mediana 0,16 -> 0,29; poligono cubierto 17 % -> 44 %'),
+    nota('La prueba ciega (30) ya se corrio con la v1, la v11 y la v15; aqui solo se revisa en el mapa.')]);
+  panel.add(ui.Label('Revision del detector SAR - Coello',
+                     {fontWeight: 'bold', fontSize: '16px', margin: '4px 0 2px 0'}))
+    .add(nota('Elija el conjunto y el evento; el analisis corre solo. Siempre usa la mejor '
+            + 'version: v15 (dos carriles) + dibujo v16, caja de 1 km, ventanas de 180 dias, '
+            + 'VH y VV corregidos por pendiente (Handwerger et al. 2022 como base).'))
+    .add(etiqueta('Conjunto')).add(selFuente)
+    .add(etiqueta('Evento')).add(selEvento)
+    .add(salida).add(resumen);
+
+  var llenarLista = function (fuente) {
+    selEvento.items().reset([]);
+    selEvento.setPlaceholder('cargando lista...');
+    if (fuente === '63') {
+      inv.map(function (g) { return g.set('ha', g.geometry().area(1).divide(1e4)); })
+         .sort('ID').reduceColumns(ee.Reducer.toList(3), ['ID', 'ha', 'FECHA_POS'])
+         .get('list').evaluate(function (l) {
+        selEvento.items().reset(l.map(function (x) {
+          var c = CAUSA_63[x[0]];
+          return {label: 'ID ' + x[0] + '  |  ' + x[1].toFixed(2) + ' ha  |  ' +
+                         String(x[2]).slice(0, 4) + (c ? '  [' + c + ']' : '  [detectado v1]'),
+                  value: x[0]};
+        }));
+        selEvento.setPlaceholder('elija un evento');
+      });
+    } else if (fuente === '30') {
+      ee.List.sequence(0, 29).map(function (i) {
+        var g = ee.Feature(lista30.get(i));
+        return ee.List([i, g.geometry().area(1).divide(1e4), ee.Date(ee.Number(g.get('Post_event'))).format('YYYY')]);
+      }).evaluate(function (l) {
+        selEvento.items().reset(l.map(function (x) {
+          return {label: (x[0] < 12 ? 'Control ciego ' : 'Deslizamiento ciego ') + x[0] + '  |  '
+                         + Number(x[1]).toFixed(2) + ' ha  |  ' + x[2], value: x[0]};
+        }));
+        selEvento.setPlaceholder('elija un sitio');
+      });
+    } else {
+      ee.List.sequence(2, 26).map(function (i) {
+        var g = ee.Feature(lista70.get(i));
+        return ee.List([i, g.get('AREA_HA'), ee.Date(ee.Number(g.get('Post_event'))).format('YYYY')]);
+      }).evaluate(function (l) {
+        selEvento.items().reset(l.map(function (x) {
+          return {label: 'Control C' + x[0] + '  |  ' + Number(x[1]).toFixed(2) + ' ha  |  ' + x[2],
+                  value: x[0]};
+        }));
+        selEvento.setPlaceholder('elija un control');
+      });
+    }
+  };
+  selFuente.onChange(function (fu) { salida.clear(); llenarLista(fu); });
+  llenarLista('63');
+  // al elegir el evento, corre solo con la configuracion fija (AUTO)
+  selEvento.onChange(function (idx) {
+    if (idx === null || idx === undefined) return;
+    mostrar(selFuente.getValue(), idx, AUTO.regla, AUTO.ventana, AUTO.polz);
+  });
+
+  var fila = function (k, v) {
+    return ui.Panel([ui.Label(k, {fontSize: '12px', width: '160px', margin: '1px 0'}),
+                     ui.Label(v, {fontSize: '12px', margin: '1px 0'})],
+                    ui.Panel.Layout.flow('horizontal'));
+  };
+  var n2 = function (x) { return (x === null || x === undefined) ? '-' : Number(x).toFixed(2); };
+  var n3 = function (x) { return (x === null || x === undefined) ? '-' : Number(x).toFixed(3); };
+  var txtPuesto = function (p) {
+    return p === null || p === undefined ? '-' : (p < 0 ? 'ninguna toca' :
+           (p <= TOP_N ? p + ' (entregada)' : p + ' (no entra)'));
+  };
+
+  var mostrar = function (fuente, idx, regla, ventana, polz) {
+    salida.clear();
+    salida.add(ui.Label('Calculando... puede tardar unos segundos.', {color: '555555'}));
+    var e = leer(fuente, idx);
+    var pol = e.F.geometry();
+    var r = modelo(pol, e.fPre, e.fPos, {ventana: ventana, polz: regla === 'v15' ? 'VHVVc20' : polz});
+    if (regla === 'v15') {
+      var rb = modelo(pol, e.fPre, e.fPos, {ventana: ventana, polz: 'FDRU20'});
+      r.reglas.v15 = carrilDoble(r, rb);
+      r.reglas.v15.dib = dibujoV15(r, rb, DIB16, false);                          // v16: dibujo de las 8
+      r.reglas.v15.med = medirDibujo(dibujoV15(r, rb, DIB16, true), pol, r.AOI);  // v16: solo las que tocan
+      // solo diagnostico: que puesto tendria con otras versiones (no entra en las metricas)
+      r.diagV = {m1: modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VH'}), rb: rb};
+    }
+    r.fPos = e.fPos;
+    pintar(r, regla, pol);
+    var R = r.reglas[regla], d = r.datos;
+    var px = ee.Image.pixelArea();
+    var suma = function (img, g) {
+      return ee.Number(px.updateMask(img).reduceRegion({reducer: ee.Reducer.sum(),
+        geometry: g, scale: 10, bestEffort: true}).get('area')).divide(1e4);
+    };
+    ee.Dictionary({
+      pre: e.fPre.format('YYYY-MM-dd'), pos: e.fPos.format('YYYY-MM-dd'),
+      iniPre: d.iniPre, finPre: d.finPre, finPos: d.finPos,
+      polha: pol.area(1).divide(1e4),
+      pend: r.slope.reduceRegion({reducer: ee.Reducer.median(), geometry: pol,
+                                  scale: 10, bestEffort: true}).get('slope'),
+      nap: d.nap, naq: d.naq, ndp: d.ndp, ndq: d.ndq, nLpre: d.nLpre, nLpos: d.nLpos,
+      nS2pre: d.nS2pre, nS2pos: d.nS2pos,
+      Iden: d.Iden, Iaoi: d.Iaoi, rk: d.rk, llPre: d.llPre, llPos: d.llPos,
+      u: R.u, marc: suma(R.z, r.AOI), acie: suma(R.z, pol),
+      cI: r.diag.contraste(r.I, 'I'), dNDVI: r.diag.contraste(r.diag.dN, 'N'),
+      lsA: r.diag.fracMala('ASCENDING'), lsD: r.diag.fracMala('DESCENDING'), dias: r.diag.dias,
+      nC: R.m.size(), nT: R.m.filter(ee.Filter.eq('toca', 1)).size(),
+      puesto: R.pu || r.puesto(R.m, R.prop), cob: r.cobertura(R.top),
+      dcob: R.med ? R.med.cob : -1, dprec: R.med ? R.med.prec : -1, diou: R.med ? R.med.iou : -1,
+      gV1: r.diagV ? r.diagV.m1.puesto(r.diagV.m1.reglas.v1.m, 'a') : -9,
+      gV11: r.diagV ? r.puesto(r.reglas.v1.m, 'a') : -9,
+      gFus: r.diagV ? r.diagV.rb.puesto(r.diagV.rb.reglas.v1.m, 'a') : -9
+    }).evaluate(function (x, err) {
+      salida.clear();
+      if (err) { salida.add(ui.Label('Error: ' + err, {color: 'aa0000'})); return; }
+      var pu = x.puesto, detecta = pu >= 1 && pu <= TOP_N;
+      var ver, color;
+      var esEvento = fuente === '63' || (fuente === '30' && idx >= 12);
+      if (esEvento) {
+        ver = detecta ? 'LO DETECTA' : (x.nT > 0 ? 'lo roza' : 'NO LO DETECTA');
+        color = detecta ? '1b7f2a' : (x.nT > 0 ? 'b36b00' : 'aa0000');
+      } else {
+        ver = detecta ? 'FALSA ALARMA' : (x.nT > 0 ? 'lo roza, sin falsa alarma' : 'SIN FALSA ALARMA');
+        color = detecta ? 'aa0000' : (x.nT > 0 ? 'b36b00' : '1b7f2a');
+      }
+      salida.add(ui.Label(ver, {fontWeight: 'bold', fontSize: '20px', color: color, margin: '10px 0 2px 0'}));
+      salida.add(nota(regla === 'v15' ? 'Mejor version: v15 dos carriles (v11 + fusion, 8 manchas) + dibujo v16.'
+        : 'Regla ' + regla + ', ventana ' + ventana.toLowerCase() + ', ' + polz + '.'));
+      if (fuente === '63' && CAUSA_63[idx]) {
+        salida.add(nota('Causa de no deteccion con la v1: ' + CAUSA_63[idx] + '.'));
+      }
+      salida.add(etiqueta('El evento'));
+      salida.add(fila('Fechas pre / post', x.pre + '  /  ' + x.pos));
+      salida.add(fila('Ventana pre usada', x.iniPre + ' a ' + x.finPre));
+      salida.add(fila('Ventana post', x.pos + ' a ' + x.finPos));
+      salida.add(fila('Area del poligono', n2(x.polha) + ' ha'));
+      salida.add(fila('Pendiente mediana', n2(x.pend) + ' grados'));
+      salida.add(fila('Imagenes asc pre/post', x.nap + ' / ' + x.naq));
+      salida.add(fila('Imagenes desc pre/post', x.ndp + ' / ' + x.ndq));
+      salida.add(fila('Imagenes ALOS-2 HV pre/post', x.nLpre + ' / ' + x.nLpos));
+      salida.add(fila('Imagenes S2 < 10 % nubes', x.nS2pre + ' / ' + x.nS2pos
+        + (x.nS2pre === 0 || x.nS2pos === 0 ? '  (se usa Cloud Score+)' : '')));
+      salida.add(etiqueta('La senal'));
+      salida.add(fila('I_ratio medio dentro', n3(x.Iden) + ' dB'));
+      salida.add(fila('I_ratio medio en la caja', n3(x.Iaoi) + ' dB'));
+      salida.add(fila('Signo dentro', x.Iden === null ? '-' :
+        (x.Iden >= 0 ? 'positivo (bajo la senal)' : 'NEGATIVO (subio la senal)')));
+      salida.add(fila('rk del mejor pixel', n3(x.rk) + (x.rk >= 0 && x.rk <= 0.01 ? '  (pasa el umbral)' : '  (no pasa)')));
+      salida.add(fila('Contraste con el anillo', n2(x.cI) + ' dB (positivo = bajo la senal)'));
+      salida.add(fila('Cambio de NDVI (optico)', n3(x.dNDVI) + (x.dNDVI > 0.05 ? '  (perdio vegetacion)' :
+        (x.dNDVI < -90 ? '  (sin imagenes)' : '  (sin perdida clara)'))));
+      salida.add(fila('Layover o sombra asc / desc', Math.round(x.lsA * 100) + ' % / ' + Math.round(x.lsD * 100) + ' %'));
+      salida.add(fila('Dias entre fecha pre y post', String(x.dias)));
+      salida.add(fila('Lluvia ventana pre / post', n2(x.llPre).split('.')[0] + ' / ' + n2(x.llPos).split('.')[0] + ' mm'));
+      salida.add(etiqueta('La decision'));
+      salida.add(fila(regla.indexOf('v14') === 0 ? 'Umbral de la regla' : 'Umbral (p99 de la caja)', n3(x.u) + ' dB'));
+      salida.add(fila('Area marcada en la caja', n2(x.marc) + ' ha'));
+      salida.add(fila('Area marcada dentro', n2(x.acie) + ' ha'));
+      salida.add(fila('Manchas en la caja', String(x.nC)));
+      salida.add(fila('Manchas que tocan', String(x.nT)));
+      salida.add(fila('Puesto de la mejor que toca', txtPuesto(pu)));
+      salida.add(fila('Poligono cubierto por las ' + (regla === 'v15' ? 8 : 4), Math.round(x.cob * 100) + ' %'));
+      if (x.diou >= 0 && esEvento) {   // en un control no hay deslizamiento que dibujar
+        salida.add(etiqueta('El dibujo (v16)'));
+        salida.add(fila('Poligono cubierto por el dibujo', Math.round(x.dcob * 100) + ' %'));
+        salida.add(fila('Dibujo que cae dentro', Math.round(x.dprec * 100) + ' %'));
+        salida.add(fila('Coincidencia (IoU)', n2(x.diou) + (x.diou >= 0.5 ? '  (buena)' : x.diou >= 0.3 ? '  (aceptable)' : '  (baja)')));
+      }
+      if (x.gV11 !== -9) {
+        var tp = function (q) { return q >= 1 && q <= TOP_N ? 'lo ve (puesto ' + q + ')' : (q < 0 ? 'ninguna mancha toca' : 'no entra (puesto ' + q + ')'); };
+        salida.add(etiqueta('Solo diagnostico (no entra en las metricas)'));
+        salida.add(fila('v1 original (VH)', tp(x.gV1)));
+        salida.add(fila('Carril 1: v11', tp(x.gV11)));
+        salida.add(fila('Carril 2: fusion', tp(x.gFus)));
+      }
+      salida.add(ui.Label(
+        'Como comprobarlo: el poligono amarillo es el evento; lo rojo es lo que la regla '
+        + 'marca; lo celeste son las 4 manchas que se entregan. Si una celeste toca el '
+        + 'amarillo, lo detecta. rk dice que parte de la caja cambia tanto o mas que el '
+        + 'mejor pixel del poligono: si pasa de 0,01, el poligono no alcanza el umbral y '
+        + 'ninguna regla de orden lo rescata. Para ver si hay deslizamiento, prenda '
+        + '"S2 pre-event" y "S2 post-event" y compare.',
+        {fontSize: '11px', color: '555555', margin: '10px 0 0 0'}));
+    });
+  };
+
+  salida.add(nota('Elija un evento para empezar.'));
+}
