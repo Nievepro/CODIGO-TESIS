@@ -185,47 +185,66 @@
 //    CAPAS S2 (2026-09-26): si la ventana no tiene imagenes con < 10 % de
 //        nubes (el filtro original), la capa quedaba vacia y no se podia
 //        prender. Ahora usa Cloud Score+ en ese caso.
-//    REVISION DEL CODIGO (2026-09-27), sin cambiar la deteccion: con FUENTE '30' o
-//        '70R' varios grupos leian los controles del archivo de 70 (ahora todos usan
-//        indices() y leer(FUENTE)); DESDE y HASTA valen para todas las fuentes y cada
-//        lote imprime los sitios que corre; los atajos de polz (VHVVc20, RAT20, ...)
-//        ya no botan opciones como vpre, lado o lee; MANCHAS no se cae si falta VH o
-//        Dynamic World; en el panel la pendiente es la del modelo (20) y hay capa del
-//        cambio del carril 2. SALIDA = 'DRIVE' manda el lote a un CSV en Drive.
-//    POR VERIFICAR (2026-09-27, GRUPO 'SIGNO'): la direccion de vista puede estar
-//        girada 180 grados frente a Vollrath et al. (2020). Ellos usan el aspecto de
-//        la banda 'angle' (apunta hacia el sensor, ~258 asc y ~102 desc); aqui se usa
-//        rumbo + 90 (apunta en contra del sensor). La nota de geometria de P29 usa, en
-//        la misma formula, el azimut al satelite (rumbo - 90 = 102 desc): las dos no
-//        pueden estar bien a la vez. Si falla la de aqui, alfa_r sale con el signo al
-//        reves y quedan en espejo la correccion por pendiente, la mascara de layover y
-//        sombra, el margen de la v18 y el angulo local del censo. Segun wiki/log.md, la
-//        v8 (P31) se integro en este script (esta reimplementacion), no con el modulo
-//        publicado que usa p31_lote.js; la v11 y la v15 tambien usan esta. SIGNO compara
-//        las dos convenciones contra el modulo publicado; VISTA = 'VOLLRATH' corre la otra.
-//        No se cambia nada hasta ver la prueba.
-//    P51 (2026-09-27, GRUPO 'P51'): probabilidad de tocar por azar (p0) de cada poligono
-//        con las manchas entregadas, para un criterio de acierto que no premie los
-//        poligonos grandes. La cobertura ahora disuelve las manchas antes de medir (en
-//        la v15 los dos carriles podian contar dos veces la misma zona).
+//    REVISION DEL CODIGO (2026-09-27), sin cambiar la deteccion:
+//      - indices(FUENTE) y leer(FUENTE, i) en todos los grupos del LOTE: DESDE y HASTA
+//        sirven para las cuatro fuentes ('63', 'CTRL', '70R', '30'), no solo para los 63.
+//      - conOpc: los atajos VHVVc20, RAT20, RVI20, MIX20, OMN20 y los de la v15 copian
+//        TODAS las opciones (antes cada atajo copiaba solo algunas).
+//      - MANCHAS: no se cae si no hay Dynamic World o VH en la ventana, y un 0 sale como
+//        0 (antes salia -99).
+//      - panel: la capa de pendiente usa la pendiente minima del modelo (20 en la v15) y
+//        hay una capa apagada con el cambio del carril 2 (fusion, z). Capas REV apagadas
+//        para revisar: manchas de cada carril, angulo de incidencia local, layover y
+//        sombra, dNDVI, VH pre, Dynamic World y pendiente.
+//      - SALIDA 'DRIVE': el lote deja un CSV en Drive (carpeta SAR_COELLO) para las
+//        corridas largas que no caben en la consola.
+//    POR VERIFICAR (2026-09-27, GRUPO 'SIGNO'): la direccion de vista del script es
+//      rumbo + 90 (78,03 asc / 281,97 desc), que apunta en sentido contrario al sensor.
+//      Vollrath et al. (2020) usan el aspecto de la banda 'angle' (~258 asc / ~102
+//      desc), que apunta hacia el sensor. Si el script esta girado 180 grados, alfa_r
+//      sale con el signo cambiado: la correccion por pendiente y la mascara de layover
+//      y sombra quedarian en espejo desde la v8. VISTA = 'VOLLRATH' corre el modelo con
+//      la otra convencion; el GRUPO 'SIGNO' compara las dos contra la libreria de
+//      Vollrath y contra el brillo del radar (las laderas de frente al sensor brillan).
+//    P51 (2026-09-27, GRUPO 'P51'): probabilidad de que las manchas entregadas toquen el
+//      poligono por azar (p0): el poligono se corre por una malla de 10 x 10 posiciones
+//      cada 100 m dentro de la caja y se cuenta en cuantas toca. Criterio propuesto,
+//      fijado antes de mirar: "detecta si toca y p0 <= 0,05". cobertura() ahora
+//      disuelve las manchas antes de cortar (con 8 manchas de dos carriles se solapan).
+//    RESULTADO DE LA REVISION (2026-09-27):
+//      V15C con VISTA 'SCRIPT': los mismos puestos de antes en los 63 y en los 25 controles
+//      (35 de 63, 0 de 25). La revision no cambia la deteccion.
+//      SIGNO (IDs 1 a 8): donde el script dice alfa_r > 15 grados el VV medio va de -9,8 a
+//      -14,9 dB; donde dice < -15, de -0,7 a -5,9 dB. Las laderas que el script toma como
+//      "de espaldas" al sensor son las mas brillantes, es decir, las que estan de frente:
+//      el signo de alfa_r en el script esta girado 180 grados. El rumbo de la banda angle
+//      mide ~276 asc y ~86 desc (hacia el sensor). dif y acu no deciden nada: en cajas de
+//      1 km casi no hay layover ni sombra (acu ~1 con las dos vistas) y la salida de la
+//      libreria no queda en la misma escala que el calculo del script.
+//      VISTA 'VOLLRATH' (signo corregido): v15 34 de 63 y 2 de 25 (C9, C25); v11 28 de 63.
+//      Gana el ID 43, pierde el 3 y el 25. No pasa la regla de parada. Se deja 'SCRIPT',
+//      pero la correccion por pendiente de la v8 en adelante es el espejo de la de Vollrath
+//      y su beneficio es empirico: eso se debe decir en la tesis.
+//      P51: por azar, las 8 manchas tocarian ~6 de los 63 (suma de p0); la v15 toca 35
+//      (probabilidad de lograrlo por azar < 1e-20). Pero "p0 <= 0,05" deja solo 6 de los 35:
+//      p0 crece con el area del poligono (r = 0,88 con log ha). Criterio descartado; p0
+//      queda como linea base de azar para la discusion.
 // ============================================================================
 
 // ------------------------------------------------------------------ AJUSTES
-var MODO   = 'LOTE';    // 'PANEL' o 'LOTE'
-var FUENTE = 'CTRL';    // para MODO 'LOTE': '63', 'CTRL', '70R' o '30' (prueba ciega); sirve en todos los grupos
+var MODO   = 'PANEL';    // 'PANEL' o 'LOTE'
+var FUENTE = '63';      // para MODO 'LOTE': '63', 'CTRL', '70R' o '30' (prueba ciega); sirve en todos los grupos
 // DESDE y HASTA son POSICIONES en la lista de la fuente, no ID: se corren DESDE a HASTA - 1.
 // En los 63, DESDE = 13 empieza en el ID 14; en los controles, en C15. Todo: DESDE = 0, HASTA = 99.
-var DESDE = 13, HASTA = 25;
+var DESDE = 0, HASTA = 99;
 // 'A' (pendiente y caja), 'B' (Lee y persistencia), 'C' (v11); 'ROC'; 'V12', 'V13', 'V14', 'V15',
 // 'V15C', 'V16', 'V18'; 'SERIE', 'FECHAS', 'MANCHAS' (diagnosticos); 'SIGNO' (prueba de alfa_r);
 // 'P51' (probabilidad de tocar por azar, para el criterio de acierto)
-var GRUPO = 'MANCHAS';
-var V15 = ['TT20', 'TA20', 'FDR20', 'FDT20', 'FDRU20', 'FSUM20'];   // variantes de la v15 que corre el LOTE
+var GRUPO = 'V15C';
+var V15 = ['TT20', 'TA20', 'FDR20', 'FDT20', 'FDRU20', 'FSUM20'];
 // FUENTE '70R' = los 45 deslizamientos confirmados del archivo de 70 (posiciones 0, 1 y 27 a 69)
-var SALIDA = 'CONSOLA';   // lote: 'CONSOLA' (print, como siempre) o 'DRIVE' (tarea que deja un CSV en Drive)
-// direccion de vista del radar: 'SCRIPT' = la de siempre (78,03 asc / 281,97 desc);
-// 'VOLLRATH' = girada 180 grados, como el codigo de Vollrath et al. (2020). Ver GRUPO 'SIGNO'.
-var VISTA = 'SCRIPT';
+var SALIDA = 'CONSOLA';   // lote: 'CONSOLA' (print) o 'DRIVE' (tarea que deja un CSV en Drive)
+var VISTA = 'SCRIPT';     // 'SCRIPT' (78,03/281,97) o 'VOLLRATH' (girada 180). Ver GRUPO 'SIGNO'.
 
 var LADO = 1000, VPRE = 180, VPOST = 180, PCT = 99, PEND_MIN = 10;
 var R_IN = 30, R_OUT = 150;   // circulo y anillo del contraste local, en metros
@@ -267,8 +286,7 @@ function ventanaPre(fPre, fPos, modo, vpre, vpost) {
   return {ini: ini, fin: ini.advance(vpost, 'day')};
 }
 
-// copia de las opciones con algunos campos cambiados. Los atajos de polz la usan para
-// no botar las demas opciones (antes 'VHVVc20' perdia vpre, vpost, lado, lee, ...)
+// copia de las opciones con algunos cambios (para que los atajos no pierdan ninguna)
 function conOpc(o, cambios) {
   var r = {}, k;
   for (k in o) r[k] = o[k];
@@ -306,10 +324,8 @@ function modelo(pol, fPre, fPos, opc) {
 
   // Geometria de vista de Sentinel-1 sobre el Coello: rumbo medido en la
   // cuenca (asc -11,97 grados, desc -168,03) + 90 = direccion de vista.
-  // VISTA = 'VOLLRATH': la misma direccion girada 180 grados (el aspecto de la banda
-  // 'angle', que es lo que usan Vollrath et al. 2020). Girarla 180 grados es lo mismo
-  // que cambiarle el signo a alfa_r. Cual es la correcta lo dice el GRUPO 'SIGNO'.
   var D2R = Math.PI / 180, NOVENTA = Math.PI / 2;
+  // VISTA 'VOLLRATH' = la misma direccion girada 180 grados (hacia el sensor). Ver GRUPO 'SIGNO'.
   var vista = VISTA === 'VOLLRATH' ? {ASCENDING: 258.03, DESCENDING: 101.97}
                                    : {ASCENDING: 78.03, DESCENDING: 281.97};
   // pendiente en la direccion de vista (alfa_r), en radianes
@@ -697,9 +713,8 @@ function modelo(pol, fPre, fPos, opc) {
   };
 
   // v12 (P51): fraccion del poligono que cubren las manchas entregadas
-  // dissolve: en la v15 los dos carriles pueden entregar manchas encimadas, que sin disolver
-  // se contaban dos veces (con un solo carril no cambia nada)
   var cobertura = function (top) {
+    // se disuelven las manchas: con dos carriles pueden solaparse y contarse dos veces
     return ee.Number(top.geometry(1).dissolve(1).intersection(pol, 1).area(1)).divide(pol.area(1));
   };
 
@@ -779,13 +794,11 @@ function modelo(pol, fPre, fPos, opc) {
           Ib: ee.Image(cb.I).rename('I').clip(AOI), agua: nasadem.select('swb').eq(0),   // v16: cambio sin mascara de pendiente
           // v19: angulo de incidencia local (grados) por sentido de paso, para el censo de manchas
           lia: function (paso) { return ee.Image.constant(thetaDe(paso)).subtract(alfaR(vista[paso]).multiply(180 / Math.PI)); },
-          // panel: pixeles en layover o sombra por sentido de paso (1 = mala geometria)
           mala: function (paso) { return malaGeom(vista[paso], thetaDe(paso)); },
           diag: {contraste: contraste, fracMala: fracMala, dN: dN, dN10: dN10,
                  nDespPre: nDesp(vp.ini, vp.fin), nDespPos: nDesp(fPos, fPos.advance(vpost, 'day')),
                  dias: fPos.difference(fPre, 'day'), ha: pol.area(1).divide(1e4)},
           puesto: puesto, vp: vp, manchas: manchas, cobertura: cobertura,
-          // para el GRUPO 'SIGNO' y para pintar la pendiente que de verdad usa el modelo
           alfaR: alfaR, vista: vista, pendMin: opc.pendMin || PEND_MIN,
           // objeto JS (no ee.Dictionary) para que Earth Engine calcule solo lo que se pide
           datos: {
@@ -859,8 +872,7 @@ function carrilDoble(a, b) {
           top: A.top.merge(B.top), pu: pu};
 }
 
-// lee un evento del inventario (fuente '63'), un sitio de la prueba ciega ('30') o uno
-// del archivo de 70 (cualquier otra: 'CTRL' o '70R')
+// lee un evento del inventario (fuente '63') o un control del archivo de 70
 function leer(fuente, idx) {
   if (fuente === '63') {
     var F = ee.Feature(inv.filter(ee.Filter.eq('ID', idx)).first());
@@ -872,9 +884,7 @@ function leer(fuente, idx) {
           fPos: ee.Date(ee.Number(G.get('Post_event')))};
 }
 
-// sitios de un lote: las posiciones DESDE a HASTA - 1 de la lista de la fuente.
-// '63' = ID del inventario; 'CTRL' = C2 a C26; '70R' = 0, 1 y 27 a 69 del archivo de 70;
-// '30' = 0 a 29 (0 a 11 controles, 12 a 29 deslizamientos)
+// lista de sitios de una fuente (ID en los 63; posicion en los demas), cortada en DESDE y HASTA
 function indices(fu) {
   var l = fu === '63' ? ee.List(inv.sort('ID').aggregate_array('ID'))
         : fu === '30' ? ee.List.sequence(0, 29)
@@ -882,40 +892,26 @@ function indices(fu) {
         : ee.List.sequence(2, 26);
   return l.slice(DESDE, HASTA);
 }
-
-// salida de un lote: en la consola, como siempre, o con SALIDA = 'DRIVE' como tarea que
-// guarda un CSV en la carpeta SAR_COELLO de Google Drive (una fila por linea, columna
-// 'fila'; la primera fila es el titulo). La tarea no tiene el limite de tiempo de la
-// consola: se lanza desde la pestana Tasks.
+// salida del lote: consola o CSV en Drive (SALIDA)
 function sacar(titulo, filas, sep) {
   filas = ee.List(filas);
-  if (SALIDA !== 'DRIVE') {
-    print(titulo);
-    print(filas.join(sep));
-    return;
-  }
-  var nombre = ('SAR_' + GRUPO + '_' + FUENTE + '_' + DESDE + '_' + HASTA + '_' + VISTA)
-                 .replace(/[^A-Za-z0-9_-]/g, '_');
-  var fc = ee.FeatureCollection(ee.List([titulo]).cat(filas).map(function (t) {
-    return ee.Feature(null, {fila: t});
-  }));
+  if (SALIDA !== 'DRIVE') { print(titulo); print(filas.join(sep)); return; }
+  var nombre = ('SAR_' + GRUPO + '_' + FUENTE + '_' + DESDE + '_' + HASTA + '_' + VISTA).replace(/[^A-Za-z0-9_-]/g, '_');
+  var fc = ee.FeatureCollection(ee.List([titulo]).cat(filas).map(function (t) { return ee.Feature(null, {fila: t}); }));
   Export.table.toDrive({collection: fc, description: nombre, folder: 'SAR_COELLO',
                         fileNamePrefix: nombre, fileFormat: 'CSV', selectors: ['fila']});
   print(titulo, 'Salida: tarea ' + nombre + ' (pestana Tasks -> Run; queda en Drive, carpeta SAR_COELLO).');
 }
-
 if (MODO === 'LOTE' && ['SERIE', 'FECHAS'].indexOf(GRUPO) < 0) {
   print('Lote ' + GRUPO + ', fuente ' + FUENTE + ', posiciones ' + DESDE + ' a ' + (HASTA - 1)
       + ', vista ' + VISTA + '. Sitios:', indices(FUENTE));
 }
+var GRUPOS = ['A', 'B', 'C', 'ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18', 'SERIE', 'FECHAS', 'MANCHAS', 'SIGNO', 'P51'];
+if (MODO === 'LOTE' && GRUPOS.indexOf(GRUPO) < 0) print('GRUPO desconocido: ' + GRUPO + '. Use uno de: ' + GRUPOS.join(', '));
 
 // ============================================================================
 //  MODO LOTE: una linea por escena, todas las versiones a la vez
 // ============================================================================
-var GRUPOS = ['A', 'B', 'C', 'ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18',
-              'SERIE', 'FECHAS', 'MANCHAS', 'SIGNO', 'P51'];
-// antes un nombre mal escrito corria el grupo 'B' sin avisar
-if (MODO === 'LOTE' && GRUPOS.indexOf(GRUPO) < 0) print('GRUPO desconocido: ' + GRUPO + '. Use uno de: ' + GRUPOS.join(', '));
 if (MODO === 'LOTE' && ['A', 'B', 'C'].indexOf(GRUPO) >= 0) {
   var lista = indices(FUENTE);
   var lineas = lista.map(function (i) {
@@ -1075,15 +1071,12 @@ if (MODO === 'LOTE' && GRUPO === 'MANCHAS') {
     var pol = e.F.geometry();
     var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
     var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
-    // sin imagenes, mode() y median() dan una imagen sin bandas y rename() tumbaba todo el
-    // lote; ahora queda una banda vacia y la columna sale en -99
+    // si no hay Dynamic World o VH en la ventana, banda vacia (enmascarada) en vez de error
     var dwc = DW.filterBounds(a.AOI).filterDate(e.fPos, e.fPos.advance(180, 'day')).select('label');
-    var dwl = ee.Image(ee.Algorithms.If(dwc.size().gt(0), dwc.mode(),
-                ee.Image.constant(-1).rename('label').updateMask(0)));
+    var dwl = ee.Image(ee.Algorithms.If(dwc.size().gt(0), dwc.mode(), ee.Image.constant(-1).rename('label').updateMask(0)));
     var vhc = s1base.filterBounds(a.AOI).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
                 .filterDate(a.vp.ini, a.vp.fin).select('VH');
-    var vhp = ee.Image(ee.Algorithms.If(vhc.size().gt(0), vhc.median(),
-                ee.Image.constant(0).rename('VH').updateMask(0)));
+    var vhp = ee.Image(ee.Algorithms.If(vhc.size().gt(0), vhc.median(), ee.Image.constant(0).rename('VH').updateMask(0)));
     var pila = a.slope.rename('pend')
       .addBands(a.lia('ASCENDING').rename('liaA')).addBands(a.lia('DESCENDING').rename('liaD'))
       .addBands(a.diag.dN.rename('dN')).addBands(vhp.rename('vh'))
@@ -1092,10 +1085,9 @@ if (MODO === 'LOTE' && GRUPO === 'MANCHAS') {
     var tops = a.reglas.v1.top.map(function (g) { return g.set('carril', 1); })
       .merge(b.reglas.v1.top.map(function (g) { return g.set('carril', 2); }));
     var st = pila.reduceRegions({collection: tops, reducer: ee.Reducer.mean(), scale: 10});
-    // -99 solo si el dato falta; antes un 0 (toca = 0, fraccion = 0) tambien salia -99
+    // -99 solo si el valor falta (antes un 0 tambien salia -99)
     var fm = function (g, k, fmt) {
-      return ee.Number(ee.Algorithms.If(ee.Algorithms.IsEqual(g.get(k), null), -99, g.get(k))).format(fmt);
-    };
+      return ee.Number(ee.Algorithms.If(ee.Algorithms.IsEqual(g.get(k), null), -99, g.get(k))).format(fmt); };
     var txt = st.toList(20).map(function (g) {
       g = ee.Feature(g);
       return ee.String(f(i, '%d')).cat(',').cat(fm(g, 'carril', '%d')).cat(',').cat(fm(g, 'toca', '%d'))
@@ -1109,7 +1101,6 @@ if (MODO === 'LOTE' && GRUPO === 'MANCHAS') {
     });
     return txt;
   });
-  // ojo: lia asc y lia desc dependen del signo de alfa_r (VISTA); ver GRUPO 'SIGNO'
   sacar('MANCHAS ' + FUENTE + ' (vista ' + VISTA + '): sitio, carril, toca, ha, cambio, pendiente, lia asc, lia desc, dNDVI, VH pre, '
       + 'f arboles, f pasto, f cultivo, f arbustos, f suelo, lluvia pre, lluvia post, n asc pre, n desc pre. Separador: punto y coma.',
       ee.List(filasM).flatten(), ';');
@@ -1169,8 +1160,7 @@ if (MODO === 'LOTE' && GRUPO === 'V18') {
     });
     return t;
   });
-  sacar('V18 ' + FUENTE + ': indice, ha; y para ' + JSON.stringify(V18) + ': puesto v15, IoU. Separador: punto y coma.',
-        filasG, ';');
+  sacar('V18 ' + FUENTE + ': indice, ha; y para ' + JSON.stringify(V18) + ': puesto v15, IoU. Separador: punto y coma.', filasG, ';');
 }
 
 // ============================================================================
@@ -1197,7 +1187,7 @@ if (MODO === 'LOTE' && GRUPO === 'V16') {
     });
     return t;
   });
-  sacar('V16 ' + FUENTE + ': indice, ha, puesto v15; y para ' + JSON.stringify(V16) + ': '
+  sacar('V16 ' + FUENTE + ' (vista ' + VISTA + '): indice, ha, puesto v15; y para ' + JSON.stringify(V16) + ': '
       + 'cobertura, precision, IoU. Separador: punto y coma.', filasD, ';');
 }
 
@@ -1246,112 +1236,96 @@ if (MODO === 'LOTE' && GRUPO === 'V14') {
 }
 
 // ============================================================================
-//  MODO LOTE, GRUPO 'SIGNO' (2026-09-27): prueba del signo de alfa_r, la pendiente en
-//  la direccion de vista. No cambia nada del modelo. Dos pruebas independientes, por
-//  sitio y sentido de paso, con las imagenes VV + VH de la ventana post:
-//  (a) Brillo. En sigma0 SIN corregir, las laderas que miran al sensor salen mas
-//      brillantes que las que le dan la espalda. En la formula del modelo, las que miran
-//      al sensor son las de alfa_r > 0. VV+ y VV- = sigma0 VV medio (dB, mediana de la
-//      ventana) donde alfa_r > +15 y < -15 grados, con n+ y n- pixeles. Si VV+ < VV- en
-//      casi todos los sitios, alfa_r esta al reves con la VISTA usada.
-//  (b) Modulo publicado. La primera imagen de la ventana se corrige con el modulo de
-//      Vollrath et al. (2020), el mismo que usa DETECTOR SAR/p31_lote.js, y con la
-//      formula de s1c en las dos convenciones: la VISTA en uso y la girada 180 grados.
-//      dif = diferencia media absoluta de VV (dB) con el modulo; acu = fraccion de la
-//      caja en que la mascara de layover y sombra coincide con la del modulo. La
-//      convencion que reproduce el modulo da dif cerca de 0 y acu cerca de 1.
-//  rumbo = aspecto medio de la banda 'angle', que es lo que el modulo usa como direccion
-//      (no depende de VISTA): ~78 asc y ~282 desc = convencion 'SCRIPT'; ~258 y ~102 =
-//      convencion 'VOLLRATH'.
-//  Correr con VISTA = 'SCRIPT' y pocos sitios (p. ej. FUENTE = '63', DESDE = 0, HASTA = 8).
+//  MODO LOTE, GRUPO 'SIGNO' (2026-09-27): prueba del signo de alfa_r (pendiente en la
+//  direccion de vista). Con una imagen Sentinel-1 de la ventana post por sentido de paso:
+//    rumbo  = aspecto de la banda 'angle' (lo que usa Vollrath: apunta hacia el sensor)
+//    VV+ / VV- = sigma0 VV medio (dB) donde alfa_r del script es > 15 o < -15 grados,
+//           con n+ y n- pixeles. Las laderas de FRENTE al sensor brillan mas: si el signo
+//           del script es correcto, VV+ > VV-; si esta girado 180, VV+ < VV-.
+//    dif / acu = diferencia media |gamma0 VV corregido por el script - Vollrath| (dB) y
+//           acuerdo de la mascara de layover y sombra con la de Vollrath, con la vista
+//           actual y con la vista girada 180 (dif180, acu180).
+//  Libreria: Vollrath, Mullissa y Reiche (2020), users/andreasvollrath/radar.
 // ============================================================================
 if (MODO === 'LOTE' && GRUPO === 'SIGNO') {
-  // se carga solo aqui: si el modulo no abre, el resto del script sigue funcionando
   var slopeLib = require('users/andreasvollrath/radar:slope_correction_lib.js');
+  var D2Rs = Math.PI / 180;
   var filasS = indices(FUENTE).map(function (i) {
     var e = leer(FUENTE, i), pol = e.F.geometry();
     var r = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
-    var fm = function (x, fmt) { return ee.Number(ee.Algorithms.If(x, x, -99)).format(fmt); };
-    var D2R = Math.PI / 180, NOV = Math.PI / 2;
     var t = ee.String(f(i, '%d'));
     ['ASCENDING', 'DESCENDING'].forEach(function (paso) {
       var c = s1base.filterBounds(r.AOI).filter(ee.Filter.eq('orbitProperties_pass', paso))
         .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
         .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
-        .filterDate(e.fPos, e.fPos.advance(VPOST, 'day'));
-      var hay = c.size().gt(0);
-      var enCaja = function (img, red) {   // reduce en la caja solo si hay imagenes
-        return ee.Dictionary(ee.Algorithms.If(hay, img.reduceRegion({reducer: red, geometry: r.AOI,
-                 scale: 10, bestEffort: true}), ee.Dictionary({})));
+        .filterDate(e.fPos, e.fPos.advance(VPOST, 'day')).sort('system:time_start');
+      var calc = function () {
+        var im = ee.Image(c.first());
+        // la libreria publica expone slope_correction_image(imagen, opciones): VV, VH (gamma0 plano),
+        // angle y no_data_mask (1 = sin layover ni sombra)
+        var of = ee.Image(slopeLib.slope_correction_image(im, {model: 'volume', elevation: r.elevation, buffer: 0}));
+        var rumbo = ee.Terrain.aspect(im.select('angle')).reduceRegion({reducer: ee.Reducer.mean(),
+                      geometry: r.AOI.buffer(5000), scale: 1000}).get('aspect');
+        var th = im.select('angle').multiply(D2Rs);
+        var vv = im.select('VV');
+        var aDeg = r.alfaR(r.vista[paso]).multiply(180 / Math.PI);
+        var red = ee.Reducer.mean().combine(ee.Reducer.count(), '', true);
+        var mas = vv.updateMask(aDeg.gt(15)).reduceRegion({reducer: red, geometry: r.AOI, scale: 10, bestEffort: true});
+        var men = vv.updateMask(aDeg.lt(-15)).reduceRegion({reducer: red, geometry: r.AOI, scale: 10, bestEffort: true});
+        var nd = of.select('no_data_mask');
+        var vVol = of.select('VV');
+        // correccion del script con una direccion de vista dada (la misma formula de s1c)
+        var prueba = function (phi) {
+          var a = r.alfaR(phi);
+          var corr = ee.Image(Math.PI / 2).subtract(th).add(a).tan().divide(ee.Image(Math.PI / 2).subtract(th).tan());
+          var g = ee.Image(10).pow(vv.divide(10)).divide(th.cos()).divide(corr).log10().multiply(10);
+          var ok = a.lt(th).and(a.gt(th.subtract(Math.PI / 2)));
+          var dif = g.subtract(vVol).abs().updateMask(ok.and(nd)).reduceRegion({reducer: ee.Reducer.mean(),
+                      geometry: r.AOI, scale: 10, bestEffort: true}).values().get(0);
+          var acu = ok.eq(nd).reduceRegion({reducer: ee.Reducer.mean(), geometry: r.AOI, scale: 10,
+                      bestEffort: true}).values().get(0);
+          return [dif, acu];
+        };
+        var p0 = prueba(r.vista[paso]), p1 = prueba(r.vista[paso] + 180);
+        var nn = function (x) { return ee.Number(ee.Algorithms.If(ee.Algorithms.IsEqual(x, null), -99, x)); };
+        return ee.String(',').cat(nn(rumbo).format('%.1f'))
+          .cat(',').cat(nn(mas.get('VV_mean')).format('%.2f')).cat(',').cat(nn(men.get('VV_mean')).format('%.2f'))
+          .cat(',').cat(nn(mas.get('VV_count')).format('%d')).cat(',').cat(nn(men.get('VV_count')).format('%d'))
+          .cat(',').cat(nn(p0[0]).format('%.2f')).cat(',').cat(nn(p0[1]).format('%.3f'))
+          .cat(',').cat(nn(p1[0]).format('%.2f')).cat(',').cat(nn(p1[1]).format('%.3f'));
       };
-      // (a) brillo
-      var aR = r.alfaR(r.vista[paso]).multiply(1 / D2R);
-      var vv = c.select('VV').median();
-      var red = ee.Reducer.mean().combine(ee.Reducer.count(), '', true);
-      var mas = enCaja(vv.updateMask(aR.gt(15)), red), menos = enCaja(vv.updateMask(aR.lt(-15)), red);
-      // (b) modulo publicado contra la formula del script (misma formula de s1c, sin margen ni Lee)
-      var im = ee.Image(c.first());
-      var of = ee.Image(slopeLib.slope_correction(ee.ImageCollection([im]),
-                 {model: 'volume', elevation: r.elevation, buffer: 0}).first());
-      var th = im.select('angle').multiply(D2R);
-      var comparar = function (phiI) {
-        var a = r.alfaR(phiI);
-        var corr = ee.Image(NOV).subtract(th).add(a).tan().divide(ee.Image(NOV).subtract(th).tan());
-        var g = ee.Image(10).pow(im.select('VV').divide(10)).divide(th.cos()).divide(corr).log10().multiply(10);
-        var ok = a.lt(th).and(a.gt(th.subtract(NOV)));
-        var mOf = of.select('no_data_mask');
-        var dif = g.subtract(of.select('VV')).abs().updateMask(ok.and(mOf)).rename('dif');
-        return enCaja(dif.addBands(ok.eq(mOf).rename('acu')), ee.Reducer.mean());
-      };
-      var kU = comparar(r.vista[paso]), kG = comparar(r.vista[paso] + 180);
-      var rumbo = ee.Algorithms.If(hay,
-        ee.Terrain.aspect(im.select('angle')).reduceRegion({reducer: ee.Reducer.mean(),
-          geometry: r.AOI.buffer(3000), scale: 100, bestEffort: true}).get('aspect'), null);
-      t = t.cat(',').cat(fm(rumbo, '%.1f'))
-           .cat(',').cat(fm(mas.get('VV_mean', -99), '%.2f')).cat(',').cat(fm(menos.get('VV_mean', -99), '%.2f'))
-           .cat(',').cat(fm(mas.get('VV_count', -99), '%d')).cat(',').cat(fm(menos.get('VV_count', -99), '%d'))
-           .cat(',').cat(fm(kU.get('dif', -99), '%.2f')).cat(',').cat(fm(kU.get('acu', -99), '%.3f'))
-           .cat(',').cat(fm(kG.get('dif', -99), '%.2f')).cat(',').cat(fm(kG.get('acu', -99), '%.3f'));
+      t = t.cat(ee.String(ee.Algorithms.If(c.size().gt(0), calc(), ',-99,-99,-99,-99,-99,-99,-99,-99,-99')));
     });
     return t;
   });
-  sacar('SIGNO ' + FUENTE + ' (vista ' + VISTA + '): indice; y para asc y desc: rumbo (aspecto de la banda angle), '
-      + 'VV+ (dB, alfa_r > 15), VV- (dB, alfa_r < -15), n+, n-, dif y acu con el modulo de Vollrath en la vista '
-      + 'en uso, dif y acu en la vista girada 180. Resumen: python3 sar/analisis/metricas.py signo ARCHIVO. '
-      + 'Separador: punto y coma.', filasS, ';');
+  sacar('SIGNO ' + FUENTE + ' (vista ' + VISTA + '): indice; y para asc y desc: rumbo de la banda angle, VV+ (dB), VV- (dB), '
+      + 'n+, n-, dif, acu, dif180, acu180. Separador: punto y coma.', filasS, ';');
 }
 
 // ============================================================================
-//  MODO LOTE, GRUPO 'P51' (2026-09-27): criterio de acierto que no premie los poligonos
-//  grandes. Con la regla de siempre (toca una mancha entregada) un poligono grande toca
-//  casi por fuerza. En los 25 controles de ajuste, los de 5 ha o mas quedan a un paso
-//  del top (4 de 7 en los puestos 1 a 8, contra 1 de 18 de los chicos; Fisher p = 0,012),
-//  y los controles son mas grandes que los deslizamientos (mediana 1,42 contra 0,40 ha).
-//  Aqui se mide, por sitio, la probabilidad de tocar POR AZAR (p0): el mismo poligono
-//  (misma forma y tamano) se corre a las 100 posiciones de una rejilla de 100 m dentro
-//  de la caja, y p0 = fraccion de posiciones en que toca alguna mancha entregada. Un
-//  poligono de 0,2 ha tiene p0 de pocos por ciento; uno de 58 ha, cerca de 1.
-//  Criterio propuesto, fijado antes de ver resultados: detecta si toca y p0 <= 0,05.
-//  Por sitio: indice, ha, puesto v11, p0 v11 (4 manchas), puesto v15, p0 v15 (8 manchas),
-//  cobertura del poligono por las 8, area entregada de las 8 (ha).
-//  Resumen: python3 sar/analisis/metricas.py p51 --eventos ARCHIVO_63 --controles ARCHIVO_CTRL
+//  MODO LOTE, GRUPO 'P51' (2026-09-27): probabilidad de tocar por azar (p0). Las
+//  manchas entregadas se pasan a pixeles y se engordan 1 pixel (lo que ya cuenta como
+//  tocar); el poligono se corre por una malla de 10 x 10 posiciones cada P51_PASO m
+//  alrededor de su sitio y p0 = fraccion de posiciones en que toca alguna mancha.
+//  Criterio propuesto, fijado antes de mirar: "detecta si toca y p0 <= 0,05".
+//  Por sitio: indice, ha, puesto v11, p0 v11, puesto v15, p0 v15, cobertura de las 8,
+//  area entregada por las 8 (ha).
 // ============================================================================
-var P51_PASO = 100;   // m entre posiciones de la rejilla (10 x 10 en la caja de 1 km)
+var P51_PASO = 100;
 function azarToque(pol, top, AOI) {
-  var k1 = {radius: 1, kernelType: 'square', units: 'pixels'};
-  // manchas entregadas en raster, crecidas un pixel para que tocar el borde cuente como tocar
-  var bl = ee.Image(0).byte().paint(top, 1).reproject(PROY).focalMax(k1).reproject(PROY);
+  var bl = ee.Image(0).byte().paint(top, 1).reproject(PROY)
+             .focalMax({radius: 1, kernelType: 'square', units: 'pixels'}).reproject(PROY);
   var pim = ee.Image(0).byte().paint(ee.FeatureCollection([ee.Feature(pol)]), 1).reproject(PROY);
-  var n = Math.round(LADO / P51_PASO), bandas = [];
-  for (var ix = 0; ix < n; ix++) {
-    for (var iy = 0; iy < n; iy++) {
-      var dx = (ix + 0.5) * P51_PASO - LADO / 2, dy = (iy + 0.5) * P51_PASO - LADO / 2;
-      bandas.push(pim.translate(dx, dy, 'meters', PROY).and(bl).rename('t' + ix + '_' + iy));
+  var bandas = [];
+  for (var ix = 0; ix < 10; ix++) {
+    for (var iy = 0; iy < 10; iy++) {
+      var dx = (ix - 4.5) * P51_PASO, dy = (iy - 4.5) * P51_PASO;
+      bandas.push(pim.translate(dx, dy, 'meters', PROY).and(bl).rename('p' + ix + '_' + iy));
     }
   }
-  var mx = ee.Image.cat(bandas).reduceRegion({reducer: ee.Reducer.max(), geometry: AOI,
-             crs: 'EPSG:32618', scale: 10, maxPixels: 1e9});
-  return ee.Number(mx.values().reduce(ee.Reducer.mean()));
+  var mx = ee.Image.cat(bandas).reduceRegion({reducer: ee.Reducer.max(), geometry: AOI.buffer(600),
+             crs: PROY, scale: 10, maxPixels: 1e9});
+  return ee.Number(ee.List(mx.values()).reduce(ee.Reducer.mean()));
 }
 if (MODO === 'LOTE' && GRUPO === 'P51') {
   var filasP = indices(FUENTE).map(function (i) {
@@ -1359,14 +1333,14 @@ if (MODO === 'LOTE' && GRUPO === 'P51') {
     var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
     var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
     var d = carrilDoble(a, b);
-    var ent = ee.Number(d.top.geometry(1).dissolve(1).area(1)).divide(1e4);
     return ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'))
       .cat(',').cat(f(a.puesto(a.reglas.v1.m, 'a'), '%d')).cat(',').cat(f(azarToque(pol, a.reglas.v1.top, a.AOI), '%.3f'))
       .cat(',').cat(f(d.pu, '%d')).cat(',').cat(f(azarToque(pol, d.top, a.AOI), '%.3f'))
-      .cat(',').cat(f(a.cobertura(d.top), '%.3f')).cat(',').cat(f(ent, '%.3f'));
+      .cat(',').cat(f(a.cobertura(d.top), '%.3f'))
+      .cat(',').cat(f(ee.Number(d.top.geometry(1).dissolve(1).area(1)).divide(1e4), '%.3f'));
   });
   sacar('P51 ' + FUENTE + ' (vista ' + VISTA + '): indice, ha, puesto v11, p0 v11, puesto v15, p0 v15, cobertura de las 8, '
-      + 'area entregada de las 8 (ha). p0 = probabilidad de tocar por azar. Separador: punto y coma.', filasP, ';');
+      + 'area entregada (ha). Separador: punto y coma.', filasP, ';');
 }
 
 // ============================================================================
@@ -1411,12 +1385,10 @@ function pintar(r, regla, pol) {
   Map.addLayer(S2pos, rgbVis, 'S2 post-event', false);
   Map.addLayer(R.z.clip(r.AOI), {min: 0, max: 1, palette: ['ffffff', 'FF0000']}, 'possible landslide zones', true);
   Map.addLayer(r.I, ColorScale, 'I_ratio masked', false, 0.75);
+  if (r.diagV) Map.addLayer(r.diagV.rb.I, {min: -2, max: 2, palette: ColorScale.palette}, 'cambio carril 2 (fusion, z)', false, 0.75);
   Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p80'))), percentileColor, 'I_ratio >= 80th percentile', false, 0.75);
   Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p90'))), percentileColor, 'I_ratio >= 90th percentile', false, 0.75);
   Map.addLayer(r.I.gte(ee.Number(r.P.get('I_p99'))), percentileColor, 'I_ratio >= 99th percentile', false, 0.75);
-  // v15: el cambio del carril 2 (fusion en escala z: 0 = mediana de la caja, 1 = su p99)
-  if (r.diagV) Map.addLayer(r.diagV.rb.I, {min: -2, max: 2, palette: ColorScale.palette}, 'cambio carril 2 (fusion, z)', false, 0.75);
-  // la pendiente minima que de verdad usa el modelo (20 en la v11 y la v15; antes siempre 10)
   Map.addLayer(r.slope.updateMask(r.slope.gte(r.pendMin)), {min: 0, max: 60, palette: ['ffffff', '000000']},
                'slope (masked, >= ' + r.pendMin + ')', false);
   Map.addLayer(ee.FeatureCollection([ee.Feature(pol)]).style({color: 'ffff00', fillColor: '00000000', width: 2}), {}, 'Coello inventory');
@@ -1425,34 +1397,24 @@ function pintar(r, regla, pol) {
   Map.addLayer(r.C, ColorScale, 'contraste local (v2)', false, 0.75);
   Map.addLayer(R.top.style({color: '00ffff', fillColor: '00ffff33', width: 2}), {}, 'top 4 entregadas');
   if (R.dib) Map.addLayer(R.dib, {palette: ['ff00ff']}, 'deslizamiento dibujado (v16)', true, 0.55);
-  // ---- capas de revision del censo de manchas (2026-09-27). Todas apagadas: se prenden
-  // en el menu Layers y se leen con la pestana Inspector (clic en el mapa).
+  // REV (2026-09-27): capas para revisar por que marca donde marca. Todas apagadas.
   if (r.diagV) {
-    var rv = r;
-    var tA = rv.reglas.v1.top, tB = rv.diagV.rb.reglas.v1.top;
-    // sin style(): asi el Inspector muestra area (a), cambio medio (mean) y toca de cada mancha
-    Map.addLayer(tA, {color: 'ffa500'}, 'REV manchas carril 1 (v11)', false);
-    Map.addLayer(tB, {color: '00ff00'}, 'REV manchas carril 2 (fusion)', false);
-    // angulo de incidencia local (depende del signo de alfa_r: ver GRUPO 'SIGNO')
-    var liaVis = {min: 0, max: 90, palette: ['d7191c', 'fdae61', 'ffffbf', 'abd9e9', '2c7bb6']};
-    Map.addLayer(rv.lia('ASCENDING').clip(rv.AOI), liaVis, 'REV angulo local asc (grados, VISTA ' + VISTA + ')', false);
-    Map.addLayer(rv.lia('DESCENDING').clip(rv.AOI), liaVis, 'REV angulo local desc (grados, VISTA ' + VISTA + ')', false);
-    Map.addLayer(rv.mala('ASCENDING').selfMask().clip(rv.AOI), {palette: ['000000']}, 'REV layover o sombra asc', false, 0.6);
-    Map.addLayer(rv.mala('DESCENDING').selfMask().clip(rv.AOI), {palette: ['444444']}, 'REV layover o sombra desc', false, 0.6);
-    // cambio de NDVI pre - post (optico, solo diagnostico): rojo = perdio vegetacion
-    Map.addLayer(rv.diag.dN.clip(rv.AOI), {min: -0.3, max: 0.3, palette: ['1a9641', 'ffffff', 'd7191c']},
-                 'REV dNDVI pre - post (optico)', false, 0.8);
-    // VH mediana de la ventana pre (dB)
-    var vhc = s1base.filterBounds(rv.AOI).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
-                .filterDate(rv.vp.ini, rv.vp.fin).select('VH');
-    Map.addLayer(vhc.median().clip(rv.AOI), {min: -25, max: -5}, 'REV VH pre (dB)', false);
-    // Dynamic World en la ventana post: clase mas frecuente (paleta oficial)
-    var dwc = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1').filterBounds(rv.AOI)
-                .filterDate(rv.fPos, rv.fPos.advance(VPOST, 'day')).select('label');
-    Map.addLayer(dwc.mode().clip(rv.AOI), {min: 0, max: 8, palette: ['419bdf', '397d49', '88b053', '7a87c6',
-                 'e49635', 'dfc35a', 'c4281b', 'a59b8f', 'b39fe1']},
-                 'REV Dynamic World post (0 agua, 1 arboles, 2 pasto, 4 cultivo, 5 arbustos, 7 suelo)', false);
-    Map.addLayer(rv.slope.clip(rv.AOI), {min: 0, max: 60, palette: ['ffffff', '000000']}, 'REV pendiente (grados)', false);
+    var liaVis = {min: 0, max: 90, palette: ['2c7bb6', 'abd9e9', 'ffffbf', 'fdae61', 'd7191c']};
+    var dwPal = ['419bdf', '397d49', '88b053', '7a87c6', 'e49635', 'dfc35a', 'c4281b', 'a59b8f', 'b39fe1'];
+    var vhPre = s1base.filterBounds(r.AOI).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+                  .filterDate(r.vp.ini, r.vp.fin).select('VH').median().clip(r.AOI);
+    var dwPos = DW.filterBounds(r.AOI).filterDate(r.fPos, r.fPos.advance(VPOST, 'day')).select('label').mode().clip(r.AOI);
+    Map.addLayer(r.reglas.v1.top, {color: 'ff8800'}, 'REV manchas carril 1 (v11)', false);
+    Map.addLayer(r.diagV.rb.reglas.v1.top, {color: '00cc44'}, 'REV manchas carril 2 (fusion)', false);
+    Map.addLayer(r.lia('ASCENDING').clip(r.AOI), liaVis, 'REV angulo de incidencia local asc', false);
+    Map.addLayer(r.lia('DESCENDING').clip(r.AOI), liaVis, 'REV angulo de incidencia local desc', false);
+    Map.addLayer(r.mala('ASCENDING').selfMask().clip(r.AOI), {palette: ['000000']}, 'REV layover o sombra asc', false, 0.6);
+    Map.addLayer(r.mala('DESCENDING').selfMask().clip(r.AOI), {palette: ['000000']}, 'REV layover o sombra desc', false, 0.6);
+    Map.addLayer(r.diag.dN.clip(r.AOI), {min: -0.3, max: 0.3, palette: ['1a9641', 'ffffff', '8c510a']},
+                 'REV dNDVI (optico, cafe = perdio vegetacion)', false);
+    Map.addLayer(vhPre, {min: -25, max: -8}, 'REV VH pre (dB)', false);
+    Map.addLayer(dwPos, {min: 0, max: 8, palette: dwPal}, 'REV Dynamic World post (moda)', false);
+    Map.addLayer(r.slope.clip(r.AOI), {min: 0, max: 60, palette: ['ffffff', '000000']}, 'REV pendiente (sin mascara)', false);
   }
 }
 
@@ -1689,12 +1651,10 @@ if (MODO === 'PANEL') {
       salida.add(fila('Dias entre fecha pre y post', String(x.dias)));
       salida.add(fila('Lluvia ventana pre / post', n2(x.llPre).split('.')[0] + ' / ' + n2(x.llPos).split('.')[0] + ' mm'));
       salida.add(etiqueta('La decision'));
-      salida.add(fila(regla.indexOf('v14') === 0 ? 'Umbral de la regla'
-        : regla === 'v15' ? 'Umbral carril 1 (p99)' : 'Umbral (p99 de la caja)', n3(x.u) + ' dB'));
+      salida.add(fila(regla === 'v15' ? 'Umbral carril 1 (p99)' : regla.indexOf('v14') === 0 ? 'Umbral de la regla' : 'Umbral (p99 de la caja)', n3(x.u) + ' dB'));
+      var dosC = regla === 'v15' ? ' (2 carriles)' : '';
       salida.add(fila('Area marcada en la caja', n2(x.marc) + ' ha'));
       salida.add(fila('Area marcada dentro', n2(x.acie) + ' ha'));
-      // en la v15 se suman las de los dos carriles: una zona marcada por los dos cuenta dos veces
-      var dosC = regla === 'v15' ? ' (2 carriles)' : '';
       salida.add(fila('Manchas en la caja' + dosC, String(x.nC)));
       salida.add(fila('Manchas que tocan' + dosC, String(x.nT)));
       salida.add(fila('Puesto de la mejor que toca', txtPuesto(pu)));
