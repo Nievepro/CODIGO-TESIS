@@ -195,10 +195,19 @@
 //    POR VERIFICAR (2026-09-27, GRUPO 'SIGNO'): la direccion de vista puede estar
 //        girada 180 grados frente a Vollrath et al. (2020). Ellos usan el aspecto de
 //        la banda 'angle' (apunta hacia el sensor, ~258 asc y ~102 desc); aqui se usa
-//        rumbo + 90 (apunta en contra del sensor). Si es asi, alfa_r sale con el signo
-//        al reves y quedan en espejo la correccion por pendiente, la mascara de layover
-//        y sombra, el margen de la v18 y el angulo local del censo. VISTA = 'VOLLRATH'
-//        corre la otra convencion; no se cambia nada hasta ver la prueba.
+//        rumbo + 90 (apunta en contra del sensor). La nota de geometria de P29 usa, en
+//        la misma formula, el azimut al satelite (rumbo - 90 = 102 desc): las dos no
+//        pueden estar bien a la vez. Si falla la de aqui, alfa_r sale con el signo al
+//        reves y quedan en espejo la correccion por pendiente, la mascara de layover y
+//        sombra, el margen de la v18 y el angulo local del censo. Segun wiki/log.md, la
+//        v8 (P31) se integro en este script (esta reimplementacion), no con el modulo
+//        publicado que usa p31_lote.js; la v11 y la v15 tambien usan esta. SIGNO compara
+//        las dos convenciones contra el modulo publicado; VISTA = 'VOLLRATH' corre la otra.
+//        No se cambia nada hasta ver la prueba.
+//    P51 (2026-09-27, GRUPO 'P51'): probabilidad de tocar por azar (p0) de cada poligono
+//        con las manchas entregadas, para un criterio de acierto que no premie los
+//        poligonos grandes. La cobertura ahora disuelve las manchas antes de medir (en
+//        la v15 los dos carriles podian contar dos veces la misma zona).
 // ============================================================================
 
 // ------------------------------------------------------------------ AJUSTES
@@ -208,7 +217,8 @@ var FUENTE = 'CTRL';    // para MODO 'LOTE': '63', 'CTRL', '70R' o '30' (prueba 
 // En los 63, DESDE = 13 empieza en el ID 14; en los controles, en C15. Todo: DESDE = 0, HASTA = 99.
 var DESDE = 13, HASTA = 25;
 // 'A' (pendiente y caja), 'B' (Lee y persistencia), 'C' (v11); 'ROC'; 'V12', 'V13', 'V14', 'V15',
-// 'V15C', 'V16', 'V18'; 'SERIE', 'FECHAS', 'MANCHAS' (diagnosticos); 'SIGNO' (prueba de alfa_r)
+// 'V15C', 'V16', 'V18'; 'SERIE', 'FECHAS', 'MANCHAS' (diagnosticos); 'SIGNO' (prueba de alfa_r);
+// 'P51' (probabilidad de tocar por azar, para el criterio de acierto)
 var GRUPO = 'MANCHAS';
 var V15 = ['TT20', 'TA20', 'FDR20', 'FDT20', 'FDRU20', 'FSUM20'];   // variantes de la v15 que corre el LOTE
 // FUENTE '70R' = los 45 deslizamientos confirmados del archivo de 70 (posiciones 0, 1 y 27 a 69)
@@ -687,8 +697,10 @@ function modelo(pol, fPre, fPos, opc) {
   };
 
   // v12 (P51): fraccion del poligono que cubren las manchas entregadas
+  // dissolve: en la v15 los dos carriles pueden entregar manchas encimadas, que sin disolver
+  // se contaban dos veces (con un solo carril no cambia nada)
   var cobertura = function (top) {
-    return ee.Number(top.geometry(1).intersection(pol, 1).area(1)).divide(pol.area(1));
+    return ee.Number(top.geometry(1).dissolve(1).intersection(pol, 1).area(1)).divide(pol.area(1));
   };
 
   // ---- diagnostico
@@ -899,7 +911,7 @@ if (MODO === 'LOTE' && ['SERIE', 'FECHAS'].indexOf(GRUPO) < 0) {
 //  MODO LOTE: una linea por escena, todas las versiones a la vez
 // ============================================================================
 var GRUPOS = ['A', 'B', 'C', 'ROC', 'V12', 'V13', 'V14', 'V15', 'V15C', 'V16', 'V18',
-              'SERIE', 'FECHAS', 'MANCHAS', 'SIGNO'];
+              'SERIE', 'FECHAS', 'MANCHAS', 'SIGNO', 'P51'];
 // antes un nombre mal escrito corria el grupo 'B' sin avisar
 if (MODO === 'LOTE' && GRUPOS.indexOf(GRUPO) < 0) print('GRUPO desconocido: ' + GRUPO + '. Use uno de: ' + GRUPOS.join(', '));
 if (MODO === 'LOTE' && ['A', 'B', 'C'].indexOf(GRUPO) >= 0) {
@@ -1230,49 +1242,126 @@ if (MODO === 'LOTE' && GRUPO === 'V14') {
 
 // ============================================================================
 //  MODO LOTE, GRUPO 'SIGNO' (2026-09-27): prueba del signo de alfa_r, la pendiente en
-//  la direccion de vista. No cambia nada del modelo. En sigma0 SIN corregir, las
-//  laderas que miran al sensor salen mas brillantes que las que le dan la espalda
-//  (varios dB en terreno como el del Coello). Con la convencion del modelo, las que
-//  miran al sensor son las de alfa_r > 0. Por sitio y sentido de paso:
-//    rumbo = aspecto medio de la banda 'angle' (lo que Vollrath et al. 2020 usan como
-//            direccion de vista; no depende de VISTA). Si da ~78 asc y ~282 desc, el
-//            script usa la convencion de ellos; si da ~258 y ~102, esta girado 180,
-//    VV+ y VV- = sigma0 VV medio (dB, mediana de la ventana post) donde alfa_r > +15 y
-//            < -15 grados, con n+ y n- pixeles.
-//  Lectura: si en casi todos los sitios VV+ > VV-, el signo esta bien. Si VV+ < VV-,
-//  alfa_r esta al reves con la VISTA usada. Correr con VISTA = 'SCRIPT'.
+//  la direccion de vista. No cambia nada del modelo. Dos pruebas independientes, por
+//  sitio y sentido de paso, con las imagenes VV + VH de la ventana post:
+//  (a) Brillo. En sigma0 SIN corregir, las laderas que miran al sensor salen mas
+//      brillantes que las que le dan la espalda. En la formula del modelo, las que miran
+//      al sensor son las de alfa_r > 0. VV+ y VV- = sigma0 VV medio (dB, mediana de la
+//      ventana) donde alfa_r > +15 y < -15 grados, con n+ y n- pixeles. Si VV+ < VV- en
+//      casi todos los sitios, alfa_r esta al reves con la VISTA usada.
+//  (b) Modulo publicado. La primera imagen de la ventana se corrige con el modulo de
+//      Vollrath et al. (2020), el mismo que usa DETECTOR SAR/p31_lote.js, y con la
+//      formula de s1c en las dos convenciones: la VISTA en uso y la girada 180 grados.
+//      dif = diferencia media absoluta de VV (dB) con el modulo; acu = fraccion de la
+//      caja en que la mascara de layover y sombra coincide con la del modulo. La
+//      convencion que reproduce el modulo da dif cerca de 0 y acu cerca de 1.
+//  rumbo = aspecto medio de la banda 'angle', que es lo que el modulo usa como direccion
+//      (no depende de VISTA): ~78 asc y ~282 desc = convencion 'SCRIPT'; ~258 y ~102 =
+//      convencion 'VOLLRATH'.
+//  Correr con VISTA = 'SCRIPT' y pocos sitios (p. ej. FUENTE = '63', DESDE = 0, HASTA = 8).
 // ============================================================================
 if (MODO === 'LOTE' && GRUPO === 'SIGNO') {
+  // se carga solo aqui: si el modulo no abre, el resto del script sigue funcionando
+  var slopeLib = require('users/andreasvollrath/radar:slope_correction_lib.js');
   var filasS = indices(FUENTE).map(function (i) {
     var e = leer(FUENTE, i), pol = e.F.geometry();
     var r = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
     var fm = function (x, fmt) { return ee.Number(ee.Algorithms.If(x, x, -99)).format(fmt); };
+    var D2R = Math.PI / 180, NOV = Math.PI / 2;
     var t = ee.String(f(i, '%d'));
     ['ASCENDING', 'DESCENDING'].forEach(function (paso) {
       var c = s1base.filterBounds(r.AOI).filter(ee.Filter.eq('orbitProperties_pass', paso))
         .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+        .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
         .filterDate(e.fPos, e.fPos.advance(VPOST, 'day'));
       var hay = c.size().gt(0);
-      var aR = r.alfaR(r.vista[paso]).multiply(180 / Math.PI);
-      var vv = c.select('VV').median();
-      var clase = function (m) {
-        return ee.Dictionary(ee.Algorithms.If(hay,
-          vv.updateMask(m).reduceRegion({reducer: ee.Reducer.mean().combine(ee.Reducer.count(), '', true),
-            geometry: r.AOI, scale: 10, bestEffort: true}), ee.Dictionary({})));
+      var enCaja = function (img, red) {   // reduce en la caja solo si hay imagenes
+        return ee.Dictionary(ee.Algorithms.If(hay, img.reduceRegion({reducer: red, geometry: r.AOI,
+                 scale: 10, bestEffort: true}), ee.Dictionary({})));
       };
-      var mas = clase(aR.gt(15)), menos = clase(aR.lt(-15));
+      // (a) brillo
+      var aR = r.alfaR(r.vista[paso]).multiply(1 / D2R);
+      var vv = c.select('VV').median();
+      var red = ee.Reducer.mean().combine(ee.Reducer.count(), '', true);
+      var mas = enCaja(vv.updateMask(aR.gt(15)), red), menos = enCaja(vv.updateMask(aR.lt(-15)), red);
+      // (b) modulo publicado contra la formula del script (misma formula de s1c, sin margen ni Lee)
+      var im = ee.Image(c.first());
+      var of = ee.Image(slopeLib.slope_correction(ee.ImageCollection([im]),
+                 {model: 'volume', elevation: r.elevation, buffer: 0}).first());
+      var th = im.select('angle').multiply(D2R);
+      var comparar = function (phiI) {
+        var a = r.alfaR(phiI);
+        var corr = ee.Image(NOV).subtract(th).add(a).tan().divide(ee.Image(NOV).subtract(th).tan());
+        var g = ee.Image(10).pow(im.select('VV').divide(10)).divide(th.cos()).divide(corr).log10().multiply(10);
+        var ok = a.lt(th).and(a.gt(th.subtract(NOV)));
+        var mOf = of.select('no_data_mask');
+        var dif = g.subtract(of.select('VV')).abs().updateMask(ok.and(mOf)).rename('dif');
+        return enCaja(dif.addBands(ok.eq(mOf).rename('acu')), ee.Reducer.mean());
+      };
+      var kU = comparar(r.vista[paso]), kG = comparar(r.vista[paso] + 180);
       var rumbo = ee.Algorithms.If(hay,
-        ee.Terrain.aspect(ee.Image(c.first()).select('angle')).reduceRegion({reducer: ee.Reducer.mean(),
+        ee.Terrain.aspect(im.select('angle')).reduceRegion({reducer: ee.Reducer.mean(),
           geometry: r.AOI.buffer(3000), scale: 100, bestEffort: true}).get('aspect'), null);
       t = t.cat(',').cat(fm(rumbo, '%.1f'))
            .cat(',').cat(fm(mas.get('VV_mean', -99), '%.2f')).cat(',').cat(fm(menos.get('VV_mean', -99), '%.2f'))
-           .cat(',').cat(fm(mas.get('VV_count', -99), '%d')).cat(',').cat(fm(menos.get('VV_count', -99), '%d'));
+           .cat(',').cat(fm(mas.get('VV_count', -99), '%d')).cat(',').cat(fm(menos.get('VV_count', -99), '%d'))
+           .cat(',').cat(fm(kU.get('dif', -99), '%.2f')).cat(',').cat(fm(kU.get('acu', -99), '%.3f'))
+           .cat(',').cat(fm(kG.get('dif', -99), '%.2f')).cat(',').cat(fm(kG.get('acu', -99), '%.3f'));
     });
     return t;
   });
   sacar('SIGNO ' + FUENTE + ' (vista ' + VISTA + '): indice; y para asc y desc: rumbo (aspecto de la banda angle), '
-      + 'VV+ (dB, alfa_r > 15), VV- (dB, alfa_r < -15), n+, n-. Si VV+ < VV- en casi todos, alfa_r esta al reves. '
+      + 'VV+ (dB, alfa_r > 15), VV- (dB, alfa_r < -15), n+, n-, dif y acu con el modulo de Vollrath en la vista '
+      + 'en uso, dif y acu en la vista girada 180. Resumen: python3 sar/analisis/metricas.py signo ARCHIVO. '
       + 'Separador: punto y coma.', filasS, ';');
+}
+
+// ============================================================================
+//  MODO LOTE, GRUPO 'P51' (2026-09-27): criterio de acierto que no premie los poligonos
+//  grandes. Con la regla de siempre (toca una mancha entregada) un poligono grande toca
+//  casi por fuerza. En los 25 controles de ajuste, los de 5 ha o mas quedan a un paso
+//  del top (4 de 7 en los puestos 1 a 8, contra 1 de 18 de los chicos; Fisher p = 0,012),
+//  y los controles son mas grandes que los deslizamientos (mediana 1,42 contra 0,40 ha).
+//  Aqui se mide, por sitio, la probabilidad de tocar POR AZAR (p0): el mismo poligono
+//  (misma forma y tamano) se corre a las 100 posiciones de una rejilla de 100 m dentro
+//  de la caja, y p0 = fraccion de posiciones en que toca alguna mancha entregada. Un
+//  poligono de 0,2 ha tiene p0 de pocos por ciento; uno de 58 ha, cerca de 1.
+//  Criterio propuesto, fijado antes de ver resultados: detecta si toca y p0 <= 0,05.
+//  Por sitio: indice, ha, puesto v11, p0 v11 (4 manchas), puesto v15, p0 v15 (8 manchas),
+//  cobertura del poligono por las 8, area entregada de las 8 (ha).
+//  Resumen: python3 sar/analisis/metricas.py p51 --eventos ARCHIVO_63 --controles ARCHIVO_CTRL
+// ============================================================================
+var P51_PASO = 100;   // m entre posiciones de la rejilla (10 x 10 en la caja de 1 km)
+function azarToque(pol, top, AOI) {
+  var k1 = {radius: 1, kernelType: 'square', units: 'pixels'};
+  // manchas entregadas en raster, crecidas un pixel para que tocar el borde cuente como tocar
+  var bl = ee.Image(0).byte().paint(top, 1).reproject(PROY).focalMax(k1).reproject(PROY);
+  var pim = ee.Image(0).byte().paint(ee.FeatureCollection([ee.Feature(pol)]), 1).reproject(PROY);
+  var n = Math.round(LADO / P51_PASO), bandas = [];
+  for (var ix = 0; ix < n; ix++) {
+    for (var iy = 0; iy < n; iy++) {
+      var dx = (ix + 0.5) * P51_PASO - LADO / 2, dy = (iy + 0.5) * P51_PASO - LADO / 2;
+      bandas.push(pim.translate(dx, dy, 'meters', PROY).and(bl).rename('t' + ix + '_' + iy));
+    }
+  }
+  var mx = ee.Image.cat(bandas).reduceRegion({reducer: ee.Reducer.max(), geometry: AOI,
+             crs: 'EPSG:32618', scale: 10, maxPixels: 1e9});
+  return ee.Number(mx.values().reduce(ee.Reducer.mean()));
+}
+if (MODO === 'LOTE' && GRUPO === 'P51') {
+  var filasP = indices(FUENTE).map(function (i) {
+    var e = leer(FUENTE, i), pol = e.F.geometry();
+    var a = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'VHVVc20'});
+    var b = modelo(pol, e.fPre, e.fPos, {ventana: 'NORMAL', polz: 'FDRU20'});
+    var d = carrilDoble(a, b);
+    var ent = ee.Number(d.top.geometry(1).dissolve(1).area(1)).divide(1e4);
+    return ee.String(f(i, '%d')).cat(',').cat(f(pol.area(1).divide(1e4), '%.3f'))
+      .cat(',').cat(f(a.puesto(a.reglas.v1.m, 'a'), '%d')).cat(',').cat(f(azarToque(pol, a.reglas.v1.top, a.AOI), '%.3f'))
+      .cat(',').cat(f(d.pu, '%d')).cat(',').cat(f(azarToque(pol, d.top, a.AOI), '%.3f'))
+      .cat(',').cat(f(a.cobertura(d.top), '%.3f')).cat(',').cat(f(ent, '%.3f'));
+  });
+  sacar('P51 ' + FUENTE + ' (vista ' + VISTA + '): indice, ha, puesto v11, p0 v11, puesto v15, p0 v15, cobertura de las 8, '
+      + 'area entregada de las 8 (ha). p0 = probabilidad de tocar por azar. Separador: punto y coma.', filasP, ';');
 }
 
 // ============================================================================
