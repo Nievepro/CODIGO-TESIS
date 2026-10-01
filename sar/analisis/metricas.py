@@ -13,6 +13,9 @@ Solo usa la libreria estandar de Python.
   python3 metricas.py p51 --eventos A --controles B [--ciega C]   # salida del GRUPO 'P51'
   python3 metricas.py variante --eventos A --controles B [--p0-base-eventos P51_63] [--tipo mtf]
                                                    # GRUPO 'CURV' (u otra variante con p0) contra la v15
+  python3 metricas.py variante --eventos A --controles B --tipo post      # v24-B, GRUPO 'POST90'
+  python3 metricas.py variante --eventos A --controles B --tipo escalon   # v24-C, GRUPO 'ESCALON'
+  python3 metricas.py orden --eventos A --controles B                     # v24-A, GRUPO 'ORDEN'
 
 Detecta = puesto entre 1 y TOP_N (4). AUC por evento con el puntaje -min(rk v11, rk
 fusion), rk = -1 cuenta como 1 (el peor). Intervalos: Wilson para proporciones y
@@ -325,6 +328,7 @@ def cmd_p51(a):
             num(statistics.median([r['p0_15'] for r in ev])), num(statistics.median([r['p0_15'] for r in ct]))))
 
 
+ORDENES = ['a', 's', 'masa']   # el mismo orden que el GRUPO 'ORDEN' del script
 CLASES = [(0, 0.1, '< 0,1 ha'), (0.1, 0.25, '0,1 a 0,25 ha'), (0.25, 0.5, '0,25 a 0,5 ha'),
           (0.5, 1.0, '0,5 a 1 ha'), (1.0, 1e9, '>= 1 ha')]
 
@@ -335,16 +339,14 @@ def leer_variante(ruta):
     return [dict(zip(cols, f)) for f in leer_filas(ruta, 10)]
 
 
-def cmd_variante(a):
-    base_e = {int(r['indice']): r for r in leer_v15c(os.path.join(DATOS, 'v15c_63.csv'))}
-    base_c = {int(r['indice']): r for r in leer_v15c(os.path.join(DATOS, 'v15c_ctrl.csv'))}
-    var_e = {int(r['indice']): r for r in leer_variante(a.eventos)}
-    var_c = {int(r['indice']): r for r in leer_variante(a.controles)}
+def informe_variante(base_e, base_c, var_e, var_c, suma_b, nombre_base='v15 guardada'):
+    """Tablas de una variante contra su base (diccionarios indice -> fila con p15, ha, rk y p0).
+    suma_b: texto con la suma de p0 de la base en los eventos. Devuelve (tb, tv, esp_v)."""
     ie, ic = sorted(set(base_e) & set(var_e)), sorted(set(base_c) & set(var_c))
     print('Sitios comparados: %d eventos y %d controles.\n' % (len(ie), len(ic)))
 
     # detecion total y por tamano
-    print('| area | eventos | v15 guardada | variante |')
+    print('| area | eventos | %s | variante |' % nombre_base)
     print('|---|---|---|---|')
     for lo, hi, nom in CLASES:
         ids = [i for i in ie if lo <= base_e[i]['ha'] < hi]
@@ -354,7 +356,7 @@ def cmd_variante(a):
     fb, fv = sum(detecta(base_c[i]['p15']) for i in ic), sum(detecta(var_c[i]['p15']) for i in ic)
     print('| **total** | %d | **%d** | **%d** |' % (len(ie), tb, tv))
     esp_b, esp_v = (len(ic) - fb) / len(ic), (len(ic) - fv) / len(ic)
-    print('\n| medida | v15 guardada | variante |')
+    print('\n| medida | %s | variante |' % nombre_base)
     print('|---|---|---|')
     print('| falsas alarmas en los %d controles | %d | %d |' % (len(ic), fb, fv))
     print('| especificidad | %s | %s |' % (pct(esp_b), pct(esp_v)))
@@ -366,26 +368,53 @@ def cmd_variante(a):
     ctrl_nuevas = [i for i in ic if not detecta(base_c[i]['p15']) and detecta(var_c[i]['p15'])]
     print('| falsas alarmas nuevas | - | %s |' % (', '.join('C%d' % i for i in ctrl_nuevas) or 'ninguna'))
     suma_v = sum(var_e[i]['p0'] for i in ie)
-    if a.p0_base_eventos:
-        cols = ['indice', 'ha', 'p11', 'p0_11', 'p15', 'p0_15', 'cob8', 'ent8']
-        pb = {int(f[0]): dict(zip(cols, f)) for f in leer_filas(a.p0_base_eventos, 8)}
-        suma_b = num(sum(pb[i]['p0_15'] for i in ie if i in pb), 1)
-    else:
-        suma_b = '~6 (encabezado del v19)'
     print('| suma de p0 en los eventos (toques esperados por azar) | %s | %s |' % (suma_b, num(suma_v, 1)))
     print('| suma de p0 en los controles | - | %s |' % num(sum(var_c[i]['p0'] for i in ic), 1))
     # AUC por evento
     auc_b = auc([puntaje(base_e[i]) for i in ie], [puntaje(base_c[i]) for i in ic])
     auc_v = auc([puntaje(var_e[i]) for i in ie], [puntaje(var_c[i]) for i in ic])
     print('| AUC por evento | %s | %s |' % (num(auc_b), num(auc_v)))
-    if a.tipo == 'mtf':   # columnas 9 y 10 = imagenes en la ventana pre y post
+    return tb, tv, esp_v
+
+
+def regla_parada(tb, tv, esp_v):
+    regla = tv > tb and esp_v >= 0.838
+    print('\nRegla de parada (sube la deteccion y la especificidad no baja de 83,8 %%): %s'
+          % ('LA PASA; revisar tambien que la suma de p0 no suba' if regla else 'NO la pasa'))
+
+
+def cmd_variante(a):
+    base_e = {int(r['indice']): r for r in leer_v15c(os.path.join(DATOS, 'v15c_63.csv'))}
+    base_c = {int(r['indice']): r for r in leer_v15c(os.path.join(DATOS, 'v15c_ctrl.csv'))}
+    var_e = {int(r['indice']): r for r in leer_variante(a.eventos)}
+    var_c = {int(r['indice']): r for r in leer_variante(a.controles)}
+    ie = sorted(set(base_e) & set(var_e))
+    if a.p0_base_eventos:
+        cols = ['indice', 'ha', 'p11', 'p0_11', 'p15', 'p0_15', 'cob8', 'ent8']
+        pb = {int(f[0]): dict(zip(cols, f)) for f in leer_filas(a.p0_base_eventos, 8)}
+        suma_b = num(sum(pb[i]['p0_15'] for i in ie if i in pb), 1)
+    else:
+        suma_b = '~6 (encabezado del v19)'
+    tb, tv, esp_v = informe_variante(base_e, base_c, var_e, var_c, suma_b)
+    if a.tipo == 'escalon':   # columnas 9 y 10 = dias entre fechas y corte que gana en el poligono
+        dias = [r['fcaja'] for r in var_e.values()]
+        print('\nDias entre FECHA_PRE y FECHA_POS (63): mediana %d, rango %d a %d'
+              % (statistics.median(dias), min(dias), max(dias)))
+        print('\n| conjunto | k = 0 (corte de siempre) | k = 1 a 4 (cortes intermedios) | sin dato |')
+        print('|---|---|---|---|')
+        for nom, g in (('eventos que detecta la variante', [r for r in var_e.values() if detecta(r['p15'])]),
+                       ('eventos que gana', [var_e[i] for i in ie if not detecta(base_e[i]['p15']) and detecta(var_e[i]['p15'])]),
+                       ('controles', list(var_c.values()))):
+            ks = [int(r['fpol']) for r in g]
+            print('| %s | %d | %d | %d |' % (nom, sum(k == 0 for k in ks), sum(k > 0 for k in ks), sum(k < 0 for k in ks)))
+        regla_parada(tb, tv, esp_v)
+        return
+    if a.tipo in ('mtf', 'post'):   # columnas 9 y 10 = imagenes en la ventana pre y post
         todos = list(var_e.values()) + list(var_c.values())
         npre, npos = [r['fcaja'] for r in todos], [r['fpol'] for r in todos]
         print('\nImagenes por ventana (asc + desc, VH): pre media %s (%d a %d); post media %s (%d a %d)'
               % (num(statistics.mean(npre), 1), min(npre), max(npre), num(statistics.mean(npos), 1), min(npos), max(npos)))
-        regla = tv > tb and esp_v >= 0.838
-        print('\nRegla de parada (sube la deteccion y la especificidad no baja de 83,8 %%): %s'
-              % ('LA PASA; revisar tambien que la suma de p0 no suba' if regla else 'NO la pasa'))
+        regla_parada(tb, tv, esp_v)
         return
     # comprobacion de unidades y diagnostico (GRUPO CURV)
     fc = [r['fcaja'] for r in list(var_e.values()) + list(var_c.values()) if r['fcaja'] >= 0]
@@ -394,9 +423,37 @@ def cmd_variante(a):
           % (num(statistics.median(fc), 2), num(min(fc), 2), num(max(fc), 2)))
     print('Fraccion del poligono que quita (eventos, diagnostico): mediana %s; en %d de %d eventos quita mas de la mitad'
           % (num(statistics.median(fp), 2), sum(x > 0.5 for x in fp), len(fp)))
-    regla = tv > tb and esp_v >= 0.838
-    print('\nRegla de parada (sube la deteccion y la especificidad no baja de 83,8 %%): %s'
-          % ('LA PASA; revisar tambien que la suma de p0 no suba' if regla else 'NO la pasa'))
+    regla_parada(tb, tv, esp_v)
+
+
+def leer_orden(ruta):
+    """Salida del GRUPO 'ORDEN': indice, ha, rk v11, rk fusion y, por cada orden (a, s, masa),
+    puesto v11, puesto fusion, puesto v15 y p0 v15. Devuelve {orden: {indice: fila}}."""
+    out = {o: {} for o in ORDENES}
+    for f in leer_filas(ruta, 4 + 4 * len(ORDENES)):
+        for k, o in enumerate(ORDENES):
+            p11, pfus, p15, p0 = f[4 + 4 * k: 8 + 4 * k]
+            out[o][int(f[0])] = {'indice': f[0], 'ha': f[1], 'rk11': f[2], 'rkfus': f[3],
+                                 'p11': p11, 'pfus': pfus, 'p15': p15, 'p0': p0}
+    return out
+
+
+def cmd_orden(a):
+    ev, ct = leer_orden(a.eventos), leer_orden(a.controles)
+    # control: el orden por area debe repetir la v15 guardada
+    for nom, corr, ruta in (('63', ev['a'], 'v15c_63.csv'), ('controles', ct['a'], 'v15c_ctrl.csv')):
+        guard = {int(r['indice']): r for r in leer_v15c(os.path.join(DATOS, ruta))}
+        dif = [i for i in sorted(set(guard) & set(corr)) if any(guard[i][c] != corr[i][c] for c in ('p11', 'pfus', 'p15'))]
+        print('Control (%s): el orden por area %s la v15 guardada%s' % (
+            nom, 'REPITE' if not dif else 'NO repite', '' if not dif else ' en: ' + ', '.join(map(str, dif))))
+    ie = sorted(ev['a'])
+    suma_b = num(sum(ev['a'][i]['p0'] for i in ie), 1)
+    for o, titulo in (('masa', 'masa sobre el umbral (hipotesis principal)'), ('s', 'cambio medio x area (secundaria)')):
+        print('\n## Orden por %s, contra el orden por area (v15)\n' % titulo)
+        tb, tv, esp_v = informe_variante(ev['a'], ct['a'], ev[o], ct[o], suma_b, nombre_base='v15 (area)')
+        regla_parada(tb, tv, esp_v)
+    print('\nOjo: el AUC por evento no cambia con el orden (rk no depende de el). Se probaron dos ordenes: '
+          'una ganancia de 1 o 2 eventos puede ser azar.')
 
 
 def main():
@@ -425,11 +482,15 @@ def main():
     v.add_argument('--eventos', required=True)
     v.add_argument('--controles', required=True)
     v.add_argument('--p0-base-eventos')
-    v.add_argument('--tipo', choices=['curv', 'mtf'], default='curv',
-                   help='curv: columnas 9-10 = fraccion quitada; mtf: imagenes pre y post')
+    v.add_argument('--tipo', choices=['curv', 'mtf', 'post', 'escalon'], default='curv',
+                   help='curv: columnas 9-10 = fraccion quitada; mtf y post (GRUPO POST90): imagenes pre y post; '
+                        'escalon: dias entre fechas y corte que gana')
+    o = sub.add_parser('orden')
+    o.add_argument('--eventos', required=True)
+    o.add_argument('--controles', required=True)
     a = ap.parse_args()
     {'resumen': cmd_resumen, 'comparar': cmd_comparar, 'tamano': cmd_tamano,
-     'signo': cmd_signo, 'p51': cmd_p51, 'variante': cmd_variante}[a.cmd](a)
+     'signo': cmd_signo, 'p51': cmd_p51, 'variante': cmd_variante, 'orden': cmd_orden}[a.cmd](a)
 
 
 if __name__ == '__main__':
